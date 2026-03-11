@@ -54,6 +54,8 @@ import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnap
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
+import { CopilotOAuth } from "./provider/Services/CopilotOAuth";
+import { CopilotAuthStore } from "./provider/Services/CopilotAuthStore";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
@@ -208,7 +210,9 @@ export type ServerCoreRuntimeServices =
   | CheckpointDiffQuery
   | OrchestrationReactor
   | ProviderService
-  | ProviderHealth;
+  | ProviderHealth
+  | CopilotOAuth
+  | CopilotAuthStore;
 
 export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
@@ -254,6 +258,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
+  const copilotOAuth = yield* CopilotOAuth;
+  const copilotAuthStore = yield* CopilotAuthStore;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -267,8 +273,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }),
     ),
   );
-
-  const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -626,13 +630,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: event.issues,
-        providers: providerStatuses,
-      },
+    Effect.gen(function* () {
+      const providers = yield* providerHealth.getStatuses;
+      return yield* broadcastPush({
+        type: "push",
+        channel: WS_CHANNELS.serverConfigUpdated,
+        data: {
+          issues: event.issues,
+          providers,
+        },
+      });
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -876,14 +883,29 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* terminalManager.close(body);
       }
 
+      case WS_METHODS.providersCopilotAuthStart: {
+        return yield* copilotOAuth.startDeviceAuth();
+      }
+
+      case WS_METHODS.providersCopilotAuthPoll: {
+        const body = stripRequestTag(request.body);
+        return yield* copilotOAuth.pollDeviceAuth(body.authId);
+      }
+
+      case WS_METHODS.providersCopilotAuthLogout: {
+        yield* copilotAuthStore.clear;
+        return;
+      }
+
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        const providers = yield* providerHealth.getStatuses;
         return {
           cwd,
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
-          providers: providerStatuses,
+          providers,
           availableEditors,
         };
 

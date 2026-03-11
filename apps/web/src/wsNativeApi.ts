@@ -201,6 +201,13 @@ export function createWsNativeApi(): NativeApi {
           if (payload) callback(payload);
         }),
     },
+    providers: {
+      copilotAuth: {
+        start: (input) => transport.request(WS_METHODS.providersCopilotAuthStart, input),
+        poll: (input) => transport.request(WS_METHODS.providersCopilotAuthPoll, input),
+        logout: (input) => transport.request(WS_METHODS.providersCopilotAuthLogout, input),
+      },
+    },
   };
 
   instance = { api, transport };

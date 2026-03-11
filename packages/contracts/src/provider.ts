@@ -48,6 +48,15 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
+export const ProviderChatRole = Schema.Literals(["user", "assistant", "system"]);
+export type ProviderChatRole = typeof ProviderChatRole.Type;
+
+export const ProviderChatMessage = Schema.Struct({
+  role: ProviderChatRole,
+  text: Schema.String,
+});
+export type ProviderChatMessage = typeof ProviderChatMessage.Type;
+
 const CodexProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
   homePath: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -77,6 +86,7 @@ export const ProviderSendTurnInput = Schema.Struct({
   input: Schema.optional(
     TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
   ),
+  history: Schema.optional(Schema.Array(ProviderChatMessage)),
   attachments: Schema.optional(
     Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
   ),

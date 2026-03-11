@@ -61,4 +61,19 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
   });
+
+  it("accepts optional history for stateless providers", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      input: "hello",
+      history: [
+        { role: "system", text: "You are a helpful assistant." },
+        { role: "user", text: "Hi" },
+        { role: "assistant", text: "Hello!" },
+      ],
+    });
+
+    expect(parsed.history?.length).toBe(3);
+    expect(parsed.history?.[0]?.role).toBe("system");
+  });
 });

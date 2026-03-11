@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, Option, PlatformError, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
@@ -44,6 +44,11 @@ import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistenc
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
+import {
+  CopilotAuthStore,
+  type CopilotAuthStoreShape,
+} from "./provider/Services/CopilotAuthStore";
+import { CopilotOAuth, type CopilotOAuthShape } from "./provider/Services/CopilotOAuth";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
@@ -81,6 +86,25 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
 
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
+};
+
+const defaultCopilotAuthStoreService: CopilotAuthStoreShape = {
+  get: Effect.succeed(Option.none()),
+  set: () => Effect.void,
+  clear: Effect.void,
+  has: Effect.succeed(false),
+};
+
+const defaultCopilotOAuthService: CopilotOAuthShape = {
+  startDeviceAuth: () =>
+    Effect.succeed({
+      authId: "auth-1",
+      verificationUri: "https://example.test",
+      userCode: "ABCD-1234",
+      expiresAt: "2026-03-01T00:00:00.000Z",
+      intervalSeconds: 5,
+    }),
+  pollDeviceAuth: () => Effect.succeed({ status: "pending" }),
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -392,6 +416,8 @@ describe("WebSocket Server", () => {
       staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
       providerHealth?: ProviderHealthShape;
+      copilotAuthStore?: CopilotAuthStoreShape;
+      copilotOAuth?: CopilotOAuthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
@@ -409,6 +435,14 @@ describe("WebSocket Server", () => {
     const providerHealthLayer = Layer.succeed(
       ProviderHealth,
       options.providerHealth ?? defaultProviderHealthService,
+    );
+    const copilotAuthStoreLayer = Layer.succeed(
+      CopilotAuthStore,
+      options.copilotAuthStore ?? defaultCopilotAuthStoreService,
+    );
+    const copilotOAuthLayer = Layer.succeed(
+      CopilotOAuth,
+      options.copilotOAuth ?? defaultCopilotOAuthService,
     );
     const openLayer = Layer.succeed(Open, options.open ?? defaultOpenService);
     const serverConfigLayer = Layer.succeed(ServerConfig, {
@@ -446,6 +480,8 @@ describe("WebSocket Server", () => {
     const dependenciesLayer = Layer.empty.pipe(
       Layer.provideMerge(runtimeLayer),
       Layer.provideMerge(providerHealthLayer),
+      Layer.provideMerge(copilotAuthStoreLayer),
+      Layer.provideMerge(copilotOAuthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),

@@ -22,6 +22,8 @@ import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
+import { CopilotAuthStoreLive } from "./provider/Layers/CopilotAuthStore";
+import { CopilotOAuthLive } from "./provider/Layers/CopilotOAuth";
 import { Server } from "./wsServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
@@ -194,15 +196,24 @@ const ServerConfigLive = (input: CliInput) =>
   );
 
 const LayerLive = (input: CliInput) =>
-  Layer.empty.pipe(
-    Layer.provideMerge(makeServerRuntimeServicesLayer()),
-    Layer.provideMerge(makeServerProviderLayer()),
-    Layer.provideMerge(ProviderHealthLive),
-    Layer.provideMerge(SqlitePersistence.layerConfig),
-    Layer.provideMerge(ServerLoggerLive),
-    Layer.provideMerge(AnalyticsServiceLayerLive),
-    Layer.provideMerge(ServerConfigLive(input)),
-  );
+  (() => {
+    const copilotAuthLayer = CopilotAuthStoreLive;
+    const providerLayer = makeServerProviderLayer().pipe(Layer.provide(copilotAuthLayer));
+    const copilotOAuthLayer = CopilotOAuthLive.pipe(Layer.provide(copilotAuthLayer));
+    const providerHealthLayer = ProviderHealthLive.pipe(Layer.provide(copilotAuthLayer));
+
+    return Layer.empty.pipe(
+      Layer.provideMerge(makeServerRuntimeServicesLayer()),
+      Layer.provideMerge(providerLayer),
+      Layer.provideMerge(copilotAuthLayer),
+      Layer.provideMerge(copilotOAuthLayer),
+      Layer.provideMerge(providerHealthLayer),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
+      Layer.provideMerge(ServerLoggerLive),
+      Layer.provideMerge(AnalyticsServiceLayerLive),
+      Layer.provideMerge(ServerConfigLive(input)),
+    );
+  })();
 
 const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";

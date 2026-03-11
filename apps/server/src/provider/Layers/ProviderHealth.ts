@@ -17,9 +17,12 @@ import { Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
+import { CopilotAuthStore } from "../Services/CopilotAuthStore";
+import { getCopilotApiToken, COPILOT_IDE_HEADERS } from "../copilotApiToken.ts";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
+const COPILOT_PROVIDER = "github-copilot" as const;
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -290,14 +293,80 @@ export const checkCodexProviderStatus: Effect.Effect<
   } satisfies ServerProviderStatus;
 });
 
+const COPILOT_MODELS_URL = "https://api.githubcopilot.com/models";
+
+export const checkCopilotProviderStatus = Effect.gen(function* () {
+  const checkedAt = new Date().toISOString();
+  const authStore = yield* CopilotAuthStore;
+  const tokenOption = yield* authStore.get;
+  const hasToken = Option.isSome(tokenOption);
+
+  if (!hasToken) {
+    return {
+      provider: COPILOT_PROVIDER,
+      status: "warning" as const,
+      available: true,
+      authStatus: "unauthenticated" as const,
+      checkedAt,
+      message: "GitHub Copilot is not authenticated. Connect in settings to continue.",
+    } satisfies ServerProviderStatus;
+  }
+
+  const token = tokenOption.value;
+  const models = yield* Effect.promise(async () => {
+    try {
+      const copilotToken = await getCopilotApiToken(token.accessToken);
+      if (!copilotToken) return null;
+
+      const response = await fetch(COPILOT_MODELS_URL, {
+        headers: {
+          Authorization: `Bearer ${copilotToken}`,
+          "User-Agent": "t3code",
+          ...COPILOT_IDE_HEADERS,
+        },
+      });
+      if (!response.ok) return null;
+      const data = (await response.json()) as {
+        data?: Array<{ id: string; name?: string }>;
+      };
+      return (
+        data.data
+          ?.filter((m) => typeof m.id === "string" && m.id.length > 0)
+          .map((m) => ({ slug: m.id, name: m.name ?? m.id })) ?? null
+      );
+    } catch {
+      return null;
+    }
+  });
+
+  return {
+    provider: COPILOT_PROVIDER,
+    status: "ready" as const,
+    available: true,
+    authStatus: "authenticated" as const,
+    checkedAt,
+    ...(models ? { models } : {}),
+  } satisfies ServerProviderStatus;
+});
+
 // ── Layer ───────────────────────────────────────────────────────────
 
 export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
-    const codexStatus = yield* checkCodexProviderStatus;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const authStore = yield* CopilotAuthStore;
+
     return {
-      getStatuses: Effect.succeed([codexStatus]),
+      getStatuses: Effect.gen(function* () {
+        const codexStatus = yield* checkCodexProviderStatus.pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const copilotStatus = yield* checkCopilotProviderStatus.pipe(
+          Effect.provideService(CopilotAuthStore, authStore),
+        );
+        return [codexStatus, copilotStatus];
+      }),
     } satisfies ProviderHealthShape;
   }),
 );

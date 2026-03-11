@@ -165,6 +165,7 @@ import {
   ClaudeAI,
   CursorIcon,
   Gemini,
+  GitHubIcon,
   Icon,
   OpenAI,
   OpenCodeIcon,
@@ -186,6 +187,7 @@ import {
 } from "./ui/dialog";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { CopilotAuthDialog } from "./CopilotAuthDialog";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   commandForProjectScript,
@@ -793,17 +795,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activeThread.messages.length > 0 ||
       activeThread.session !== null),
   );
-  const selectedServiceTierSetting = settings.codexServiceTier;
-  const selectedServiceTier = resolveAppServiceTier(selectedServiceTierSetting);
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
   const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const selectedServiceTierSetting = settings.codexServiceTier;
+  const selectedServiceTier =
+    selectedProvider === "codex" ? resolveAppServiceTier(selectedServiceTierSetting) : null;
   const baseThreadModel = resolveModelSlugForProvider(
     selectedProvider,
     activeThread?.model ?? activeProject?.model ?? getDefaultModel(selectedProvider),
   );
-  const customModelsForSelectedProvider = settings.customCodexModels;
+  const customModelsForSelectedProvider =
+    selectedProvider === "github-copilot"
+      ? settings.customCopilotModels
+      : settings.customCodexModels;
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -832,7 +838,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
-    () => getCustomModelOptionsByProvider(settings),
+    () => getCustomModelOptionsByProvider(settings, null),
     [settings],
   );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
@@ -1273,6 +1279,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
   const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
+  const copilotServerModels = useMemo(() => {
+    const status = providerStatuses.find((s) => s.provider === "github-copilot");
+    return status?.models ?? null;
+  }, [providerStatuses]);
+  const modelOptionsByProviderFull = useMemo(
+    () => getCustomModelOptionsByProvider(settings, copilotServerModels),
+    [settings, copilotServerModels],
+  );
+  const [copilotAuthDialogOpen, setCopilotAuthDialogOpen] = useState(false);
+  const copilotAuthenticated =
+    providerStatuses.find((s) => s.provider === "github-copilot")?.authStatus === "authenticated";
   const activeProvider = activeThread?.session?.provider ?? "codex";
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
@@ -2544,7 +2561,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       const title = truncateTitle(titleSeed);
       let threadCreateModel: ModelSlug =
-        selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
+        selectedModel ||
+        (activeProject.model as ModelSlug) ||
+        (getDefaultModel(selectedProvider) as ModelSlug);
 
       if (isLocalDraftThread) {
         await api.orchestration.dispatchCommand({
@@ -2964,7 +2983,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedModel ||
       (activeThread.model as ModelSlug) ||
       (activeProject.model as ModelSlug) ||
-      DEFAULT_MODEL_BY_PROVIDER.codex;
+      (getDefaultModel(selectedProvider) as ModelSlug);
 
     sendInFlightRef.current = true;
     beginSendPhase("sending-turn");
@@ -3067,7 +3086,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftProvider(activeThread.id, provider);
       setComposerDraftModel(
         activeThread.id,
-        resolveAppModelSelection(provider, settings.customCodexModels, model),
+        resolveAppModelSelection(
+          provider,
+          provider === "github-copilot" ? settings.customCopilotModels : settings.customCodexModels,
+          model,
+        ),
       );
       scheduleComposerFocus();
     },
@@ -3078,6 +3101,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftModel,
       setComposerDraftProvider,
       settings.customCodexModels,
+      settings.customCopilotModels,
     ],
   );
   const onEffortSelect = useCallback(
@@ -3628,9 +3652,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     provider={selectedProvider}
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
-                    modelOptionsByProvider={modelOptionsByProvider}
+                    modelOptionsByProvider={modelOptionsByProviderFull}
                     serviceTierSetting={selectedServiceTierSetting}
                     onProviderModelChange={onProviderModelSelect}
+                    copilotAuthenticated={copilotAuthenticated}
+                    onSignInCopilot={() => setCopilotAuthDialogOpen(true)}
+                  />
+                  <CopilotAuthDialog
+                    open={copilotAuthDialogOpen}
+                    onOpenChange={setCopilotAuthDialogOpen}
                   />
 
                   {selectedProvider === "codex" && selectedEffort != null ? (
@@ -4101,17 +4131,21 @@ const ProviderHealthBanner = memo(function ProviderHealthBanner({
       ? `${status.provider} provider is unavailable.`
       : `${status.provider} provider has limited availability.`;
 
-  return (
-    <div className="pt-3 mx-auto max-w-3xl">
-      <Alert variant={status.status === "error" ? "error" : "warning"}>
-        <CircleAlertIcon />
-        <AlertTitle>
-          {status.provider === "codex" ? "Codex provider status" : `${status.provider} status`}
-        </AlertTitle>
-        <AlertDescription className="line-clamp-3" title={status.message ?? defaultMessage}>
-          {status.message ?? defaultMessage}
-        </AlertDescription>
-      </Alert>
+    return (
+      <div className="pt-3 mx-auto max-w-3xl">
+        <Alert variant={status.status === "error" ? "error" : "warning"}>
+          <CircleAlertIcon />
+          <AlertTitle>
+            {status.provider === "codex"
+              ? "Codex provider status"
+              : status.provider === "github-copilot"
+                ? "GitHub Copilot status"
+                : `${status.provider} status`}
+          </AlertTitle>
+          <AlertDescription className="line-clamp-3" title={status.message ?? defaultMessage}>
+            {status.message ?? defaultMessage}
+          </AlertDescription>
+        </Alert>
     </div>
   );
 });
@@ -5295,16 +5329,32 @@ const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
 
-function getCustomModelOptionsByProvider(settings: {
-  customCodexModels: readonly string[];
-}): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
+function getCustomModelOptionsByProvider(
+  settings: {
+    customCodexModels: readonly string[];
+    customCopilotModels: readonly string[];
+  },
+  copilotServerModels: ReadonlyArray<{ slug: string; name: string }> | null | undefined,
+): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
+  let copilotOptions: ReadonlyArray<{ slug: string; name: string }>;
+  if (copilotServerModels && copilotServerModels.length > 0) {
+    const serverSlugs = new Set(copilotServerModels.map((m) => m.slug));
+    const customAdditions = settings.customCopilotModels
+      .filter((slug) => slug.trim().length > 0 && !serverSlugs.has(slug))
+      .map((slug) => ({ slug, name: slug }));
+    copilotOptions = [...copilotServerModels, ...customAdditions];
+  } else {
+    copilotOptions = getAppModelOptions("github-copilot", settings.customCopilotModels);
+  }
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
+    "github-copilot": copilotOptions,
   };
 }
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
+  "github-copilot": GitHubIcon,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
 };
@@ -5350,6 +5400,8 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   serviceTierSetting: AppServiceTier;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
+  copilotAuthenticated: boolean;
+  onSignInCopilot: () => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
@@ -5394,7 +5446,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             props.lockedProvider !== null && props.lockedProvider !== option.value;
           return (
             <MenuSub key={option.value}>
-              <MenuSubTrigger disabled={isDisabledByProviderLock}>
+              <MenuSubTrigger disabled={isDisabledByProviderLock && option.value !== "github-copilot"}>
                 <OptionIcon
                   aria-hidden="true"
                   className="size-4 shrink-0 text-muted-foreground/85"
@@ -5403,36 +5455,51 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               </MenuSubTrigger>
               <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
                 <MenuGroup>
-                  <MenuRadioGroup
-                    value={props.provider === option.value ? props.model : ""}
-                    onValueChange={(value) => {
-                      if (props.disabled) return;
-                      if (isDisabledByProviderLock) return;
-                      if (!value) return;
-                      const resolvedModel = resolveModelForProviderPicker(
-                        option.value,
-                        value,
-                        props.modelOptionsByProvider[option.value],
-                      );
-                      if (!resolvedModel) return;
-                      props.onProviderModelChange(option.value, resolvedModel);
-                      setIsMenuOpen(false);
-                    }}
-                  >
-                    {props.modelOptionsByProvider[option.value].map((modelOption) => (
-                      <MenuRadioItem
-                        key={`${option.value}:${modelOption.slug}`}
-                        value={modelOption.slug}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        {option.value === "codex" &&
-                        shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
-                          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-                        ) : null}
-                        {modelOption.name}
-                      </MenuRadioItem>
-                    ))}
-                  </MenuRadioGroup>
+                  {option.value === "github-copilot" && !props.copilotAuthenticated ? (
+                    <MenuItem
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        props.onSignInCopilot();
+                      }}
+                    >
+                      <GitHubIcon
+                        aria-hidden="true"
+                        className="size-4 shrink-0 text-muted-foreground/85"
+                      />
+                      Sign in to GitHub Copilot
+                    </MenuItem>
+                  ) : (
+                    <MenuRadioGroup
+                      value={props.provider === option.value ? props.model : ""}
+                      onValueChange={(value) => {
+                        if (props.disabled) return;
+                        if (isDisabledByProviderLock) return;
+                        if (!value) return;
+                        const resolvedModel = resolveModelForProviderPicker(
+                          option.value,
+                          value,
+                          props.modelOptionsByProvider[option.value],
+                        );
+                        if (!resolvedModel) return;
+                        props.onProviderModelChange(option.value, resolvedModel);
+                        setIsMenuOpen(false);
+                      }}
+                    >
+                      {props.modelOptionsByProvider[option.value].map((modelOption) => (
+                        <MenuRadioItem
+                          key={`${option.value}:${modelOption.slug}`}
+                          value={modelOption.slug}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          {option.value === "codex" &&
+                          shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
+                            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                          ) : null}
+                          {modelOption.name}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  )}
                 </MenuGroup>
               </MenuSubPopup>
             </MenuSub>

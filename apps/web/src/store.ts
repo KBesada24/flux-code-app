@@ -143,24 +143,31 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
+  if (providerName === "codex" || providerName === "github-copilot") {
     return providerName;
   }
   return "codex";
 }
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
+const COPILOT_MODEL_SLUGS = new Set<string>(
+  getModelOptions("github-copilot").map((option) => option.slug),
+);
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
+  if (input.sessionProviderName === "codex" || input.sessionProviderName === "github-copilot") {
     return input.sessionProviderName;
   }
   const normalizedCodex = normalizeModelSlug(input.model, "codex");
   if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
     return "codex";
+  }
+  const normalizedCopilot = normalizeModelSlug(input.model, "github-copilot");
+  if (normalizedCopilot && COPILOT_MODEL_SLUGS.has(normalizedCopilot)) {
+    return "github-copilot";
   }
   return "codex";
 }

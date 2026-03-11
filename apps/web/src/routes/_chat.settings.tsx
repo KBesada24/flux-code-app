@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
@@ -13,7 +13,7 @@ import {
 } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
@@ -21,6 +21,7 @@ import { Input } from "../components/ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { CopilotAuthDialog } from "../components/CopilotAuthDialog";
 
 const THEME_OPTIONS = [
   {
@@ -54,6 +55,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "github-copilot",
+    title: "GitHub Copilot",
+    description: "Save additional Copilot model slugs for the picker and `/model` command.",
+    placeholder: "gpt-4o",
+    example: "gpt-4o",
+  },
 ] as const;
 
 function getCustomModelsForProvider(
@@ -62,6 +70,9 @@ function getCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
+      return settings.customCodexModels;
+    case "github-copilot":
+      return settings.customCopilotModels;
     default:
       return settings.customCodexModels;
   }
@@ -73,6 +84,9 @@ function getDefaultCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
+      return defaults.customCodexModels;
+    case "github-copilot":
+      return defaults.customCopilotModels;
     default:
       return defaults.customCodexModels;
   }
@@ -81,6 +95,9 @@ function getDefaultCustomModelsForProvider(
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
     case "codex":
+      return { customCodexModels: models };
+    case "github-copilot":
+      return { customCopilotModels: models };
     default:
       return { customCodexModels: models };
   }
@@ -90,21 +107,29 @@ function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const queryClient = useQueryClient();
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
+    "github-copilot": "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
 
+  const [copilotAuthDialogOpen, setCopilotAuthDialogOpen] = useState(false);
+
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const copilotStatus = serverConfigQuery.data?.providers.find(
+    (status) => status.provider === "github-copilot",
+  );
+  const copilotConnected = copilotStatus?.authStatus === "authenticated";
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -178,6 +203,12 @@ function SettingsRouteView() {
     },
     [settings, updateSettings],
   );
+
+  const logoutCopilot = useCallback(async () => {
+    const api = ensureNativeApi();
+    await api.providers.copilotAuth.logout({});
+    await queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
+  }, [queryClient]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -298,6 +329,44 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">GitHub Copilot</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Connect your GitHub account to use your Copilot subscription.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {copilotConnected ? "Connected" : "Not connected"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {copilotConnected
+                      ? "GitHub Copilot token is stored locally on this device."
+                      : "Start device login to authorize Copilot."}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!copilotConnected ? (
+                    <Button
+                      type="button"
+                      onClick={() => setCopilotAuthDialogOpen(true)}
+                      disabled={copilotAuthDialogOpen}
+                    >
+                      Connect GitHub Copilot
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => void logoutCopilot()}>
+                      Disconnect
+                    </Button>
+                  )}
+                </div>
+              </div>
+
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
@@ -446,7 +515,8 @@ function SettingsRouteView() {
                                   className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
                                 >
                                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                                    {provider === "codex" && shouldShowFastTierIcon(slug, codexServiceTier) ? (
+                                    {provider === "codex" &&
+                                    shouldShowFastTierIcon(slug, codexServiceTier) ? (
                                       <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
                                     ) : null}
                                     <code className="min-w-0 flex-1 truncate text-xs text-foreground">
@@ -600,6 +670,11 @@ function SettingsRouteView() {
           </div>
         </div>
       </div>
+
+      <CopilotAuthDialog
+        open={copilotAuthDialogOpen}
+        onOpenChange={setCopilotAuthDialogOpen}
+      />
     </SidebarInset>
   );
 }

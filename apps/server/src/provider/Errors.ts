@@ -86,6 +86,22 @@ export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<Provide
 }
 
 /**
+ * CopilotOAuthError - GitHub Copilot OAuth/device flow failure.
+ */
+export class CopilotOAuthError extends Schema.TaggedErrorClass<CopilotOAuthError>()(
+  "CopilotOAuthError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Copilot OAuth failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+/**
  * ProviderValidationError - Invalid provider API input.
  */
 export class ProviderValidationError extends Schema.TaggedErrorClass<ProviderValidationError>()(

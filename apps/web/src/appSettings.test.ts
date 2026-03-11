@@ -47,6 +47,12 @@ describe("getAppModelOptions", () => {
       isCustom: true,
     });
   });
+
+  it("supports copilot built-in and custom models", () => {
+    const options = getAppModelOptions("github-copilot", ["custom/copilot-model"]);
+    expect(options.some((option) => option.slug === "gpt-4o")).toBe(true);
+    expect(options.some((option) => option.slug === "custom/copilot-model")).toBe(true);
+  });
 });
 
 describe("resolveAppModelSelection", () => {
@@ -58,6 +64,10 @@ describe("resolveAppModelSelection", () => {
 
   it("falls back to the provider default when no model is selected", () => {
     expect(resolveAppModelSelection("codex", [], "")).toBe("gpt-5.4");
+  });
+
+  it("falls back to copilot default when no model is selected", () => {
+    expect(resolveAppModelSelection("github-copilot", [], "")).toBe("gpt-4o");
   });
 });
 

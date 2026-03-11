@@ -54,16 +54,30 @@ describe("resolveModelSlug", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);
   });
+
+  it("resolves Copilot models and falls back to Copilot defaults", () => {
+    expect(resolveModelSlug("unknown", "github-copilot")).toBe(
+      DEFAULT_MODEL_BY_PROVIDER["github-copilot"],
+    );
+    for (const model of MODEL_OPTIONS_BY_PROVIDER["github-copilot"]) {
+      expect(resolveModelSlug(model.slug, "github-copilot")).toBe(model.slug);
+    }
+  });
 });
 
 describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
     expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
   });
+
+  it("returns no reasoning options for copilot", () => {
+    expect(getReasoningEffortOptions("github-copilot")).toEqual([]);
+  });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
+    expect(getDefaultReasoningEffort("github-copilot")).toBeNull();
   });
 });

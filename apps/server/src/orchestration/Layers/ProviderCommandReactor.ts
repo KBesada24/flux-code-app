@@ -3,6 +3,7 @@ import {
   CommandId,
   EventId,
   type OrchestrationEvent,
+  type ProviderChatMessage,
   type ProviderModelOptions,
   type ProviderKind,
   type ProviderServiceTier,
@@ -43,6 +44,10 @@ function toNonEmptyProviderInput(value: string | undefined): string | undefined 
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+function normalizeProviderKind(value: string | null | undefined): ProviderKind | undefined {
+  return value === "codex" || value === "github-copilot" ? value : undefined;
+}
+
 function mapProviderSessionStatusToOrchestrationStatus(
   status: "connecting" | "ready" | "running" | "error" | "closed",
 ): OrchestrationSession["status"] {
@@ -72,6 +77,7 @@ const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+const COPILOT_HISTORY_MAX_MESSAGES = 20;
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -82,6 +88,34 @@ function toErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+function buildCopilotHistory(input: {
+  readonly thread: {
+    readonly messages: ReadonlyArray<{
+      readonly id: string;
+      readonly role: "user" | "assistant" | "system";
+      readonly text: string;
+      readonly streaming: boolean;
+    }>;
+  };
+  readonly excludeMessageId?: string;
+}): ProviderChatMessage[] {
+  const history: ProviderChatMessage[] = [];
+  for (const message of input.thread.messages) {
+    if (input.excludeMessageId && message.id === input.excludeMessageId) {
+      continue;
+    }
+    if (message.streaming) {
+      continue;
+    }
+    const text = message.text.trim();
+    if (!text) {
+      continue;
+    }
+    history.push({ role: message.role, text });
+  }
+  return history.slice(-COPILOT_HISTORY_MAX_MESSAGES);
 }
 
 function isUnknownPendingApprovalRequestError(error: unknown): boolean {
@@ -212,8 +246,7 @@ const make = Effect.gen(function* () {
     }
 
     const desiredRuntimeMode = thread.runtimeMode;
-    const currentProvider: ProviderKind | undefined =
-      thread.session?.providerName === "codex" ? thread.session.providerName : undefined;
+    const currentProvider = normalizeProviderKind(thread.session?.providerName ?? undefined);
     const preferredProvider: ProviderKind | undefined = options?.provider ?? currentProvider;
     const desiredModel = options?.model ?? thread.model;
     const effectiveCwd = resolveThreadWorkspaceCwd({
@@ -319,6 +352,7 @@ const make = Effect.gen(function* () {
 
   const sendTurnForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly messageId: string;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly provider?: ProviderKind;
@@ -350,6 +384,11 @@ const make = Effect.gen(function* () {
     const modelForTurn =
       sessionModelSwitch === "unsupported" ? activeSession?.model : input.model;
 
+    const history =
+      (input.provider ?? activeSession?.provider) === "github-copilot"
+        ? buildCopilotHistory({ thread, excludeMessageId: input.messageId })
+        : undefined;
+
     yield* providerService.sendTurn({
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
@@ -358,6 +397,7 @@ const make = Effect.gen(function* () {
       ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
       ...(input.modelOptions !== undefined ? { modelOptions: input.modelOptions } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(history && history.length > 0 ? { history } : {}),
     });
   });
 
@@ -466,6 +506,7 @@ const make = Effect.gen(function* () {
 
     yield* sendTurnForThread({
       threadId: event.payload.threadId,
+      messageId: message.id,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.provider !== undefined ? { provider: event.payload.provider } : {}),

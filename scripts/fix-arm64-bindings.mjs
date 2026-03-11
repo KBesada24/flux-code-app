@@ -77,7 +77,7 @@ for (const entry of bunEntries) {
     let pkgJsonPath;
 
     if (pkgName.startsWith("@")) {
-      const scopedDirs = readdirSync(join(nodeModulesDir, pkgName), { withFileTypes: true }).catch?.(() => []);
+      const _scopedDirs = readdirSync(join(nodeModulesDir, pkgName), { withFileTypes: true }).catch?.(() => []);
       const innerPkgs = readdirSync(join(nodeModulesDir, pkgName), { withFileTypes: true });
       for (const inner of innerPkgs) {
         pkgJsonPath = join(nodeModulesDir, pkgName, inner.name, "package.json");
@@ -119,7 +119,7 @@ function checkPkgJson(pkgJsonPath, nodeModulesDir) {
       const arm64 = getArm64Variant(depName);
       if (!arm64VariantInstalled(nodeModulesDir, arm64)) {
         // Use same version as x64 variant
-        const arm64Version = version.replace(/win32-x64(-msvc)?/, "win32-arm64$1");
+        const _arm64Version = version.replace(/win32-x64(-msvc)?/, "win32-arm64$1");
         markForInstall(nodeModulesDir, `${arm64}@${version}`);
       }
     }

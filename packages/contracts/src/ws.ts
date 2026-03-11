@@ -64,6 +64,11 @@ export const WS_METHODS = {
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
 
+  // Provider auth
+  providersCopilotAuthStart: "providers.copilotAuth.start",
+  providersCopilotAuthPoll: "providers.copilotAuth.poll",
+  providersCopilotAuthLogout: "providers.copilotAuth.logout",
+
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
@@ -76,6 +81,41 @@ export const WS_CHANNELS = {
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
 } as const;
+
+export const CopilotAuthStartInput = Schema.Struct({});
+export type CopilotAuthStartInput = typeof CopilotAuthStartInput.Type;
+
+export const CopilotAuthStartResult = Schema.Struct({
+  authId: TrimmedNonEmptyString,
+  verificationUri: TrimmedNonEmptyString,
+  userCode: TrimmedNonEmptyString,
+  expiresAt: TrimmedNonEmptyString,
+  intervalSeconds: Schema.Number,
+});
+export type CopilotAuthStartResult = typeof CopilotAuthStartResult.Type;
+
+export const CopilotAuthPollInput = Schema.Struct({
+  authId: TrimmedNonEmptyString,
+});
+export type CopilotAuthPollInput = typeof CopilotAuthPollInput.Type;
+
+export const CopilotAuthPollStatus = Schema.Literals([
+  "pending",
+  "authorized",
+  "expired",
+  "denied",
+  "error",
+]);
+export type CopilotAuthPollStatus = typeof CopilotAuthPollStatus.Type;
+
+export const CopilotAuthPollResult = Schema.Struct({
+  status: CopilotAuthPollStatus,
+  message: Schema.optional(Schema.String),
+});
+export type CopilotAuthPollResult = typeof CopilotAuthPollResult.Type;
+
+export const CopilotAuthLogoutInput = Schema.Struct({});
+export type CopilotAuthLogoutInput = typeof CopilotAuthLogoutInput.Type;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
 
@@ -125,6 +165,11 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.terminalClear, TerminalClearInput),
   tagRequestBody(WS_METHODS.terminalRestart, TerminalRestartInput),
   tagRequestBody(WS_METHODS.terminalClose, TerminalCloseInput),
+
+  // Provider auth
+  tagRequestBody(WS_METHODS.providersCopilotAuthStart, CopilotAuthStartInput),
+  tagRequestBody(WS_METHODS.providersCopilotAuthPoll, CopilotAuthPollInput),
+  tagRequestBody(WS_METHODS.providersCopilotAuthLogout, CopilotAuthLogoutInput),
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),

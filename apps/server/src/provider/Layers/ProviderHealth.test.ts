@@ -4,7 +4,14 @@ import { Effect, Layer, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { checkCodexProviderStatus, parseAuthStatusFromOutput } from "./ProviderHealth";
+import { Option } from "effect";
+
+import {
+  checkCodexProviderStatus,
+  checkCopilotProviderStatus,
+  parseAuthStatusFromOutput,
+} from "./ProviderHealth";
+import { CopilotAuthStore, type CopilotAuthStoreShape } from "../Services/CopilotAuthStore";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -157,6 +164,49 @@ it.effect("returns warning when login status command is unsupported", () =>
         }
         throw new Error(`Unexpected args: ${joined}`);
       }),
+    ),
+  ),
+);
+
+it.effect("returns unauthenticated when copilot token is missing", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCopilotProviderStatus;
+    assert.strictEqual(status.provider, "github-copilot");
+    assert.strictEqual(status.authStatus, "unauthenticated");
+  }).pipe(
+    Effect.provideService(
+      CopilotAuthStore,
+      {
+        get: Effect.succeed(Option.none()),
+        set: () => Effect.void,
+        clear: Effect.void,
+        has: Effect.succeed(false),
+      } satisfies CopilotAuthStoreShape,
+    ),
+  ),
+);
+
+it.effect("returns authenticated when copilot token exists", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCopilotProviderStatus;
+    assert.strictEqual(status.provider, "github-copilot");
+    assert.strictEqual(status.authStatus, "authenticated");
+  }).pipe(
+    Effect.provideService(
+      CopilotAuthStore,
+      {
+        get: Effect.succeed(
+          Option.some({
+            accessToken: "token",
+            tokenType: "bearer",
+            scopes: [],
+            acquiredAt: "2026-03-01T00:00:00.000Z",
+          }),
+        ),
+        set: () => Effect.void,
+        clear: Effect.void,
+        has: Effect.succeed(true),
+      } satisfies CopilotAuthStoreShape,
     ),
   ),
 );

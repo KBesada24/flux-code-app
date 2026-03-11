@@ -41,6 +41,13 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
+import type {
+  CopilotAuthLogoutInput,
+  CopilotAuthPollInput,
+  CopilotAuthPollResult,
+  CopilotAuthStartInput,
+  CopilotAuthStartResult,
+} from "./ws";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -147,5 +154,12 @@ export interface NativeApi {
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
     onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+  };
+  providers: {
+    copilotAuth: {
+      start: (input: CopilotAuthStartInput) => Promise<CopilotAuthStartResult>;
+      poll: (input: CopilotAuthPollInput) => Promise<CopilotAuthPollResult>;
+      logout: (input: CopilotAuthLogoutInput) => Promise<void>;
+    };
   };
 }

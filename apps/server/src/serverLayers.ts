@@ -19,11 +19,13 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
 import { ProviderUnsupportedError } from "./provider/Errors";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
+import { CopilotAdapterLive } from "./provider/Layers/CopilotAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
+import { CopilotAuthStore } from "./provider/Services/CopilotAuthStore";
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { KeybindingsLive } from "./keybindings";
@@ -39,7 +41,7 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
   ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
+  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService | CopilotAuthStore
 > {
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;
@@ -57,8 +59,10 @@ export function makeServerProviderLayer(): Layer.Layer<
     const codexAdapterLayer = makeCodexAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
+    const copilotAdapterLayer = CopilotAdapterLive;
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(codexAdapterLayer),
+      Layer.provide(copilotAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
     return makeProviderServiceLive(
