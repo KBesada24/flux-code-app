@@ -821,14 +821,17 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
-  const child = ChildProcess.spawn(process.execPath, [backendEntry], {
+  // In development, use the `bun` binary directly so that:
+  //   1. bun:sqlite is available (used by @effect/sql-sqlite-bun)
+  //   2. node-pty native bindings built for the host Node/Bun ABI are found
+  // In production, process.execPath is the packaged Electron binary; run it
+  // in Node mode with ELECTRON_RUN_AS_NODE so it doesn't open a second window.
+  const [spawnCmd, spawnArgs, spawnExtraEnv]: [string, string[], NodeJS.ProcessEnv] = isDevelopment
+    ? ["bun", [backendEntry], {}]
+    : [process.execPath, [backendEntry], { ELECTRON_RUN_AS_NODE: "1" }];
+  const child = ChildProcess.spawn(spawnCmd, spawnArgs, {
     cwd: resolveBackendCwd(),
-    // In Electron main, process.execPath points to the Electron binary.
-    // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
-    },
+    env: { ...backendEnv(), ...spawnExtraEnv },
     stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
   });
   backendProcess = child;

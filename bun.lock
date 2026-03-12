@@ -160,6 +160,9 @@
       },
     },
   },
+  "trustedDependencies": [
+    "node-pty",
+  ],
   "catalog": {
     "@effect/language-service": "0.75.1",
     "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@8881a9b",

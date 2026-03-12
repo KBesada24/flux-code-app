@@ -9,6 +9,7 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   EventId,
+  MODEL_OPTIONS_BY_PROVIDER,
   ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   ProviderSession,
@@ -35,6 +36,7 @@ import {
 
 const PROVIDER = "github-copilot" as const;
 const DEFAULT_BASE_URL = "https://api.githubcopilot.com";
+const VALID_COPILOT_MODELS = new Set(MODEL_OPTIONS_BY_PROVIDER[PROVIDER].map((m) => m.slug));
 const API_BASE_URL_ENV = "T3CODE_COPILOT_API_BASE_URL";
 
 type OpenAIToolCall = {
@@ -167,12 +169,16 @@ const makeCopilotAdapter = Effect.gen(function* () {
     }
 
     const createdAt = nowIso();
+    const normalizedSessionModel =
+      input.model && VALID_COPILOT_MODELS.has(input.model)
+        ? input.model
+        : DEFAULT_MODEL_BY_PROVIDER[PROVIDER];
     const session: ProviderSession = {
       provider: PROVIDER,
       status: "ready",
       runtimeMode: input.runtimeMode,
       cwd: input.cwd,
-      model: input.model,
+      model: normalizedSessionModel,
       threadId: input.threadId,
       resumeCursor: input.resumeCursor,
       activeTurnId: undefined,
@@ -224,8 +230,10 @@ const makeCopilotAdapter = Effect.gen(function* () {
       }
 
       const turnId = toTurnId();
-      const resolvedModel =
-        input.model ?? session.model ?? DEFAULT_MODEL_BY_PROVIDER[PROVIDER];
+      const rawModel = input.model ?? session.model ?? DEFAULT_MODEL_BY_PROVIDER[PROVIDER];
+      const resolvedModel = VALID_COPILOT_MODELS.has(rawModel)
+        ? rawModel
+        : DEFAULT_MODEL_BY_PROVIDER[PROVIDER];
       updateSession(input.threadId, {
         status: "running",
         activeTurnId: turnId,
