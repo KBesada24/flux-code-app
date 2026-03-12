@@ -453,9 +453,10 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
-    // Skip @electron/rebuild: node-pty ships prebuilds/win32-arm64/ and loads
+    // Skip @electron/rebuild: node-pty ships prebuilds for macOS/Windows and loads
     // them at runtime via process.arch detection; msgpackr-extract gracefully
     // falls back to pure-JS when no ARM64 native binary is present.
+    // Linux has no prebuilds, so node-pty is rebuilt explicitly after npm install (see below).
     npmRebuild: false,
   };
   const publishConfig = resolveGitHubPublishConfig();
@@ -477,6 +478,10 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.png",
       category: "Development",
     };
+    buildConfig.asarUnpack = [
+      "node_modules/node-pty/build/**",
+      "node_modules/node-pty/prebuilds/**",
+    ];
   }
 
   if (platform === "win") {
@@ -648,6 +653,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...commandOutputOptions(options.verbose),
     })`npm install --omit=dev --ignore-scripts`,
   );
+
+  if (options.platform === "linux") {
+    yield* Effect.log("[desktop-artifact] Rebuilding node-pty native module for Linux...");
+    yield* runCommand(
+      ChildProcess.make({
+        cwd: path.join(stageAppDir, "node_modules", "node-pty"),
+        ...commandOutputOptions(options.verbose),
+      })`npx node-gyp rebuild`,
+    );
+  }
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,

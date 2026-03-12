@@ -35,6 +35,7 @@ import { GitHubCliLive } from "./git/Layers/GitHubCli";
 import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
+import { DisabledPtyAdapterLive } from "./terminal/Layers/DisabledPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
@@ -109,13 +110,12 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(checkpointReactorLayer),
   );
 
-  const terminalLayer = TerminalManagerLive.pipe(
-    Layer.provide(
-      typeof Bun !== "undefined" && process.platform !== "win32"
-        ? BunPtyAdapterLive
-        : NodePtyAdapterLive,
-    ),
-  );
+  const ptyAdapterLayer =
+    typeof Bun !== "undefined" && process.platform !== "win32"
+      ? BunPtyAdapterLive
+      : NodePtyAdapterLive.pipe(Layer.catchCause(() => DisabledPtyAdapterLive));
+
+  const terminalLayer = TerminalManagerLive.pipe(Layer.provide(ptyAdapterLayer));
 
   const gitManagerLayer = GitManagerLive.pipe(
     Layer.provideMerge(gitCoreLayer),
