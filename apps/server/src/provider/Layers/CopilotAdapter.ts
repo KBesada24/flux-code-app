@@ -266,6 +266,7 @@ const makeCopilotAdapter = Effect.gen(function* () {
             messages.unshift({ role: "system", content: buildCopilotSystemPrompt(session.cwd) });
           }
 
+          const assistantItemId = toRuntimeItemId();
           const MAX_TOOL_ROUNDS = 20;
           let round = 0;
           let lastFinishReason: string | null = null;
@@ -345,6 +346,7 @@ const makeCopilotAdapter = Effect.gen(function* () {
                   emit({
                     ...makeEventBase(input.threadId, turnId),
                     type: "content.delta",
+                    itemId: assistantItemId,
                     payload: {
                       streamKind: "assistant_text",
                       delta: delta.content,
@@ -507,7 +509,7 @@ const makeCopilotAdapter = Effect.gen(function* () {
           emit({
             ...makeEventBase(input.threadId, turnId),
             type: "item.completed",
-            itemId: toRuntimeItemId(),
+            itemId: assistantItemId,
             payload: {
               itemType: "assistant_message",
               status: "completed",
