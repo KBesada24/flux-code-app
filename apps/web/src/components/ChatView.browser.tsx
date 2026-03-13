@@ -2,11 +2,13 @@
 import "../index.css";
 
 import {
+  DEFAULT_TERMINAL_ID,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
+  type TerminalSessionSnapshot,
   type ThreadId,
   type WsWelcomePayload,
   WS_CHANNELS,
@@ -256,7 +258,33 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
-function resolveWsRpc(tag: string): unknown {
+function buildTerminalSessionSnapshot(request: WsRequestEnvelope["body"]): TerminalSessionSnapshot {
+  const cwd =
+    typeof request.cwd === "string" && request.cwd.length > 0 ? request.cwd : "/repo/project";
+  const threadId =
+    typeof request.threadId === "string" && request.threadId.length > 0
+      ? request.threadId
+      : THREAD_ID;
+  const terminalId =
+    typeof request.terminalId === "string" && request.terminalId.length > 0
+      ? request.terminalId
+      : DEFAULT_TERMINAL_ID;
+
+  return {
+    threadId,
+    terminalId,
+    cwd,
+    status: "running",
+    pid: 1234,
+    history: "",
+    exitCode: null,
+    exitSignal: null,
+    updatedAt: NOW_ISO,
+  };
+}
+
+function resolveWsRpc(request: WsRequestEnvelope["body"]): unknown {
+  const tag = request._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
@@ -297,6 +325,17 @@ function resolveWsRpc(tag: string): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.terminalOpen || tag === WS_METHODS.terminalRestart) {
+    return buildTerminalSessionSnapshot(request);
+  }
+  if (
+    tag === WS_METHODS.terminalResize ||
+    tag === WS_METHODS.terminalClear ||
+    tag === WS_METHODS.terminalClose ||
+    tag === WS_METHODS.terminalWrite
+  ) {
+    return null;
+  }
   return {};
 }
 
@@ -324,7 +363,7 @@ const worker = setupWorker(
       client.send(
         JSON.stringify({
           id: request.id,
-          result: resolveWsRpc(method),
+          result: resolveWsRpc(request.body),
         }),
       );
     });
@@ -406,6 +445,13 @@ async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Pro
         (button) => button.textContent?.trim() === expectedLabel,
       ) as HTMLButtonElement | null,
     `Unable to find ${expectedLabel} interaction mode button.`,
+  );
+}
+
+async function waitForButtonByAriaLabel(label: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`),
+    `Unable to find button with label "${label}".`,
   );
 }
 
@@ -789,12 +835,84 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === WS_METHODS.shellOpenInEditor);
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.shellOpenInEditor,
             cwd: "/repo/project",
             editor: "vscode",
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles the terminal drawer from the top bar", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-terminal-toggle" as MessageId,
+        targetText: "terminal toggle target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              shortcut: {
+                key: "j",
+                modKey: true,
+                ctrlKey: false,
+                metaKey: false,
+                shiftKey: false,
+                altKey: false,
+              },
+              command: "terminal.toggle",
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const openButton = await waitForButtonByAriaLabel("Show terminal");
+      expect(openButton.getAttribute("aria-pressed")).toBe("false");
+
+      openButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector(".thread-terminal-drawer")).toBeTruthy();
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            threadId: THREAD_ID,
+            terminalId: DEFAULT_TERMINAL_ID,
+            cwd: "/repo/project",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const closeButton = await waitForButtonByAriaLabel("Hide terminal");
+      expect(closeButton.getAttribute("aria-pressed")).toBe("true");
+
+      closeButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector(".thread-terminal-drawer")).toBeNull();
+          const restoredButton = document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Show terminal"]',
+          );
+          expect(restoredButton).toBeTruthy();
+          expect(restoredButton?.getAttribute("aria-pressed")).toBe("false");
         },
         { timeout: 8_000, interval: 16 },
       );

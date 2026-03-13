@@ -32,11 +32,14 @@ import {
   buildCopilotSystemPrompt,
   COPILOT_TOOL_DEFINITIONS,
   executeCopilotTool,
+  getCopilotToolTitle,
 } from "./CopilotTools.ts";
 
 const PROVIDER = "github-copilot" as const;
 const DEFAULT_BASE_URL = "https://api.githubcopilot.com";
-const VALID_COPILOT_MODELS = new Set(MODEL_OPTIONS_BY_PROVIDER[PROVIDER].map((m) => m.slug));
+const VALID_COPILOT_MODELS = new Set<string>(
+  MODEL_OPTIONS_BY_PROVIDER[PROVIDER].map((model) => model.slug),
+);
 const API_BASE_URL_ENV = "T3CODE_COPILOT_API_BASE_URL";
 
 type OpenAIToolCall = {
@@ -430,7 +433,7 @@ const makeCopilotAdapter = Effect.gen(function* () {
                 itemId: toolItemId,
                 payload: {
                   itemType: "dynamic_tool_call",
-                  title: tc.name,
+                  title: getCopilotToolTitle(tc.name),
                 },
               });
               emit({
@@ -451,12 +454,7 @@ const makeCopilotAdapter = Effect.gen(function* () {
 
               const result = await executeCopilotTool(session.cwd ?? ".", tc.name, args);
 
-              // For write_file, additionally emit a file_change item
-              if (tc.name === "write_file") {
-                const filePath =
-                  typeof (args as Record<string, unknown>).path === "string"
-                    ? (args as Record<string, unknown>).path
-                    : "unknown";
+              if (result.ok && result.fileChangePath) {
                 const fileItemId = toRuntimeItemId();
                 emit({
                   ...makeEventBase(input.threadId, turnId),
@@ -464,7 +462,7 @@ const makeCopilotAdapter = Effect.gen(function* () {
                   itemId: fileItemId,
                   payload: {
                     itemType: "file_change",
-                    title: filePath as string,
+                    title: result.fileChangePath,
                   },
                 });
                 emit({
@@ -478,7 +476,6 @@ const makeCopilotAdapter = Effect.gen(function* () {
                 });
               }
 
-              const resultSummary = (result.slice(0, 120) || `${tc.name} completed`).trim();
               emit({
                 ...makeEventBase(input.threadId, turnId),
                 type: "item.completed",
@@ -486,14 +483,14 @@ const makeCopilotAdapter = Effect.gen(function* () {
                 payload: {
                   itemType: "dynamic_tool_call",
                   status: "completed",
-                  detail: resultSummary,
+                  detail: result.summary,
                 },
               });
               emit({
                 ...makeEventBase(input.threadId, turnId),
                 type: "tool.summary",
                 payload: {
-                  summary: resultSummary,
+                  summary: result.summary,
                   precedingToolUseIds: tc.id ? [tc.id] : undefined,
                 },
               });
@@ -501,7 +498,7 @@ const makeCopilotAdapter = Effect.gen(function* () {
               messages.push({
                 role: "tool",
                 tool_call_id: tc.id,
-                content: result,
+                content: result.output,
               });
             }
           }
