@@ -1,4 +1,10 @@
-import { EventId, MessageId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import {
+  EventId,
+  MessageId,
+  ThreadId,
+  TurnId,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,10 +15,12 @@ import {
   derivePendingUserInputs,
   deriveTimelineEntries,
   deriveWorkLogEntries,
+  findProposedPlanByReference,
   findLatestProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
+import type { ProposedPlan } from "./types";
 
 function makeActivity(overrides: {
   id?: string;
@@ -34,6 +42,19 @@ function makeActivity(overrides: {
     payload,
     turnId: overrides.turnId ? TurnId.makeUnsafe(overrides.turnId) : null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+  };
+}
+
+function makeProposedPlan(overrides: Partial<ProposedPlan> = {}): ProposedPlan {
+  return {
+    id: "plan:thread-1:turn:turn-1",
+    turnId: TurnId.makeUnsafe("turn-1"),
+    planMarkdown: "# Plan",
+    implementedAt: null,
+    implementationThreadId: null,
+    createdAt: "2026-02-23T00:00:01.000Z",
+    updatedAt: "2026-02-23T00:00:01.000Z",
+    ...overrides,
   };
 }
 
@@ -265,27 +286,24 @@ describe("findLatestProposedPlan", () => {
     expect(
       findLatestProposedPlan(
         [
-          {
+          makeProposedPlan({
             id: "plan:thread-1:turn:turn-1",
             turnId: TurnId.makeUnsafe("turn-1"),
             planMarkdown: "# Older",
-            createdAt: "2026-02-23T00:00:01.000Z",
-            updatedAt: "2026-02-23T00:00:01.000Z",
-          },
-          {
+          }),
+          makeProposedPlan({
             id: "plan:thread-1:turn:turn-1",
             turnId: TurnId.makeUnsafe("turn-1"),
             planMarkdown: "# Latest",
-            createdAt: "2026-02-23T00:00:01.000Z",
             updatedAt: "2026-02-23T00:00:02.000Z",
-          },
-          {
+          }),
+          makeProposedPlan({
             id: "plan:thread-1:turn:turn-2",
             turnId: TurnId.makeUnsafe("turn-2"),
             planMarkdown: "# Different turn",
             createdAt: "2026-02-23T00:00:03.000Z",
             updatedAt: "2026-02-23T00:00:03.000Z",
-          },
+          }),
         ],
         TurnId.makeUnsafe("turn-1"),
       ),
@@ -293,6 +311,8 @@ describe("findLatestProposedPlan", () => {
       id: "plan:thread-1:turn:turn-1",
       turnId: "turn-1",
       planMarkdown: "# Latest",
+      implementedAt: null,
+      implementationThreadId: null,
       createdAt: "2026-02-23T00:00:01.000Z",
       updatedAt: "2026-02-23T00:00:02.000Z",
     });
@@ -301,25 +321,70 @@ describe("findLatestProposedPlan", () => {
   it("falls back to the most recently updated proposed plan", () => {
     const latestPlan = findLatestProposedPlan(
       [
-        {
+        makeProposedPlan({
           id: "plan:thread-1:turn:turn-1",
           turnId: TurnId.makeUnsafe("turn-1"),
           planMarkdown: "# First",
-          createdAt: "2026-02-23T00:00:01.000Z",
-          updatedAt: "2026-02-23T00:00:01.000Z",
-        },
-        {
+        }),
+        makeProposedPlan({
           id: "plan:thread-1:turn:turn-2",
           turnId: TurnId.makeUnsafe("turn-2"),
           planMarkdown: "# Latest",
           createdAt: "2026-02-23T00:00:02.000Z",
           updatedAt: "2026-02-23T00:00:03.000Z",
-        },
+        }),
       ],
       null,
     );
 
     expect(latestPlan?.planMarkdown).toBe("# Latest");
+  });
+
+  it("ignores already implemented proposed plans", () => {
+    const latestPlan = findLatestProposedPlan(
+      [
+        makeProposedPlan({
+          id: "plan:thread-1:turn:turn-1",
+          planMarkdown: "# Implemented",
+          implementedAt: "2026-02-23T00:00:03.000Z",
+          implementationThreadId: ThreadId.makeUnsafe("thread-impl"),
+          updatedAt: "2026-02-23T00:00:03.000Z",
+        }),
+        makeProposedPlan({
+          id: "plan:thread-1:turn:turn-2",
+          turnId: TurnId.makeUnsafe("turn-2"),
+          planMarkdown: "# Actionable",
+          updatedAt: "2026-02-23T00:00:02.000Z",
+        }),
+      ],
+      null,
+    );
+
+    expect(latestPlan?.planMarkdown).toBe("# Actionable");
+  });
+});
+
+describe("findProposedPlanByReference", () => {
+  it("resolves a referenced proposed plan from another thread", () => {
+    const proposedPlan = makeProposedPlan({
+      id: "plan-1",
+      planMarkdown: "# Resolved plan",
+    });
+
+    expect(
+      findProposedPlanByReference(
+        [
+          {
+            id: ThreadId.makeUnsafe("thread-source"),
+            proposedPlans: [proposedPlan],
+          },
+        ],
+        {
+          threadId: ThreadId.makeUnsafe("thread-source"),
+          planId: "plan-1",
+        },
+      ),
+    ).toEqual(proposedPlan);
   });
 });
 
@@ -495,11 +560,12 @@ describe("deriveTimelineEntries", () => {
       ],
       [
         {
-          id: "plan:thread-1:turn:turn-1",
-          turnId: TurnId.makeUnsafe("turn-1"),
-          planMarkdown: "# Ship it",
-          createdAt: "2026-02-23T00:00:02.000Z",
-          updatedAt: "2026-02-23T00:00:02.000Z",
+          ...makeProposedPlan({
+            id: "plan:thread-1:turn:turn-1",
+            planMarkdown: "# Ship it",
+            createdAt: "2026-02-23T00:00:02.000Z",
+            updatedAt: "2026-02-23T00:00:02.000Z",
+          }),
         },
       ],
       [
@@ -640,19 +706,19 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("PROVIDER_OPTIONS", () => {
-  it("keeps Claude Code and Cursor visible as unavailable placeholders in the stack base", () => {
-    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
+  it("keeps Claude Agent and Cursor visible in the provider stack", () => {
+    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
       { value: "github-copilot", label: "GitHub Copilot", available: true },
-      { value: "claudeCode", label: "Claude Code", available: false },
+      { value: "claudeAgent", label: "Claude Agent", available: true },
       { value: "cursor", label: "Cursor", available: false },
     ]);
     expect(claude).toEqual({
-      value: "claudeCode",
-      label: "Claude Code",
-      available: false,
+      value: "claudeAgent",
+      label: "Claude Agent",
+      available: true,
     });
     expect(cursor).toEqual({
       value: "cursor",

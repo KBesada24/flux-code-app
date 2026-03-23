@@ -29,6 +29,7 @@ const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
   "github-copilot": new Set(getModelOptions("github-copilot").map((option) => option.slug)),
+  claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -36,6 +37,9 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
@@ -47,6 +51,9 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some([])),
   ),
   customCopilotModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  customClaudeModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -116,6 +123,7 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
       settings.customCopilotModels,
       "github-copilot",
     ),
+    customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
   };
 }
 

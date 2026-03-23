@@ -13,6 +13,8 @@ import {
 import { Cache, Cause, Duration, Effect, Layer, Option, Queue, Ref, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/isRepo.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -486,6 +488,7 @@ function runtimeEventToActivities(
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const projectionTurnRepository = yield* ProjectionTurnRepository;
 
   const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
     DEFAULT_ASSISTANT_DELIVERY_MODE,
@@ -682,6 +685,9 @@ const make = Effect.gen(function* () {
     threadId: ThreadId;
     threadProposedPlans: ReadonlyArray<{
       id: string;
+      turnId: TurnId | null;
+      implementedAt: string | null;
+      implementationThreadId: ThreadId | null;
       createdAt: string;
     }>;
     planId: string;
@@ -703,8 +709,10 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         proposedPlan: {
           id: input.planId,
-          turnId: input.turnId ?? null,
+          turnId: input.turnId ?? existingPlan?.turnId ?? null,
           planMarkdown,
+          implementedAt: existingPlan?.implementedAt ?? null,
+          implementationThreadId: existingPlan?.implementationThreadId ?? null,
           createdAt: existingPlan?.createdAt ?? input.createdAt,
           updatedAt: input.updatedAt,
         },
@@ -717,6 +725,9 @@ const make = Effect.gen(function* () {
     threadId: ThreadId;
     threadProposedPlans: ReadonlyArray<{
       id: string;
+      turnId: TurnId | null;
+      implementedAt: string | null;
+      implementationThreadId: ThreadId | null;
       createdAt: string;
     }>;
     planId: string;
@@ -747,6 +758,57 @@ const make = Effect.gen(function* () {
         updatedAt: input.updatedAt,
       });
       yield* clearBufferedProposedPlan(input.planId);
+    });
+
+  const markSourcePlanImplementedForAcceptedTurn = (input: {
+    threadId: ThreadId;
+    acceptedTurnId: TurnId;
+    acceptedStartedAt: string;
+    sourceProposedPlanThreadId: ThreadId | null;
+    sourceProposedPlanId: string | null;
+  }) =>
+    Effect.gen(function* () {
+      if (
+        input.sourceProposedPlanThreadId === null ||
+        input.sourceProposedPlanId === null
+      ) {
+        return;
+      }
+
+      const refreshedReadModel = yield* orchestrationEngine.getReadModel();
+      const targetThread = refreshedReadModel.threads.find((entry) => entry.id === input.threadId);
+      if (!targetThread || targetThread.session?.activeTurnId !== input.acceptedTurnId) {
+        return;
+      }
+
+      const sourceThread = refreshedReadModel.threads.find(
+        (entry) => entry.id === input.sourceProposedPlanThreadId,
+      );
+      if (!sourceThread) {
+        return;
+      }
+
+      const sourcePlan = sourceThread.proposedPlans.find(
+        (proposedPlan) => proposedPlan.id === input.sourceProposedPlanId,
+      );
+      if (!sourcePlan || sourcePlan.implementedAt !== null) {
+        return;
+      }
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.makeUnsafe(
+          `provider:turn-started:consume-plan:${crypto.randomUUID()}`,
+        ),
+        threadId: sourceThread.id,
+        proposedPlan: {
+          ...sourcePlan,
+          implementedAt: input.acceptedStartedAt,
+          implementationThreadId: input.threadId,
+          updatedAt: input.acceptedStartedAt,
+        },
+        createdAt: input.acceptedStartedAt,
+      });
     });
 
   const clearTurnStateForSession = (threadId: ThreadId) =>
@@ -793,6 +855,12 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+      const pendingTurnStart =
+        event.type === "turn.started"
+          ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+              threadId: thread.id,
+            })
+          : Option.none();
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -881,6 +949,16 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+
+          if (event.type === "turn.started" && eventTurnId && Option.isSome(pendingTurnStart)) {
+            yield* markSourcePlanImplementedForAcceptedTurn({
+              threadId: thread.id,
+              acceptedTurnId: eventTurnId,
+              acceptedStartedAt: now,
+              sourceProposedPlanThreadId: pendingTurnStart.value.sourceProposedPlanThreadId,
+              sourceProposedPlanId: pendingTurnStart.value.sourceProposedPlanId,
+            });
+          }
         }
       }
 
@@ -1142,4 +1220,6 @@ const make = Effect.gen(function* () {
   } satisfies ProviderRuntimeIngestionShape;
 });
 
-export const ProviderRuntimeIngestionLive = Layer.effect(ProviderRuntimeIngestionService, make);
+export const ProviderRuntimeIngestionLive = Layer.effect(ProviderRuntimeIngestionService, make).pipe(
+  Layer.provideMerge(ProjectionTurnRepositoryLive),
+);

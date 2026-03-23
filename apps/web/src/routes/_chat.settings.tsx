@@ -62,6 +62,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "gpt-4o",
     example: "gpt-4o",
   },
+  {
+    provider: "claudeAgent",
+    title: "Claude Agent",
+    description: "Save additional Claude model slugs for the picker and `/model` command.",
+    placeholder: "claude-sonnet-4-6",
+    example: "claude-opus-4-6",
+  },
 ] as const;
 
 function getCustomModelsForProvider(
@@ -73,6 +80,8 @@ function getCustomModelsForProvider(
       return settings.customCodexModels;
     case "github-copilot":
       return settings.customCopilotModels;
+    case "claudeAgent":
+      return settings.customClaudeModels;
     default:
       return settings.customCodexModels;
   }
@@ -87,6 +96,8 @@ function getDefaultCustomModelsForProvider(
       return defaults.customCodexModels;
     case "github-copilot":
       return defaults.customCopilotModels;
+    case "claudeAgent":
+      return defaults.customClaudeModels;
     default:
       return defaults.customCodexModels;
   }
@@ -98,6 +109,8 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
       return { customCodexModels: models };
     case "github-copilot":
       return { customCopilotModels: models };
+    case "claudeAgent":
+      return { customClaudeModels: models };
     default:
       return { customCodexModels: models };
   }
@@ -115,6 +128,7 @@ function SettingsRouteView() {
   >({
     codex: "",
     "github-copilot": "",
+    claudeAgent: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -124,6 +138,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const claudeBinaryPath = settings.claudeBinaryPath;
   const codexServiceTier = settings.codexServiceTier;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const copilotStatus = serverConfigQuery.data?.providers.find(
@@ -367,6 +382,51 @@ function SettingsRouteView() {
                 </div>
               </div>
 
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Claude Agent</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Optional CLI overrides for Claude Agent sessions started from this device.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="claude-binary-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Claude binary path</span>
+                  <Input
+                    id="claude-binary-path"
+                    value={claudeBinaryPath}
+                    onChange={(event) => updateSettings({ claudeBinaryPath: event.target.value })}
+                    placeholder="claude"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Leave blank to use <code>claude</code> from your PATH.
+                  </span>
+                </label>
+
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <p>
+                    Binary source:{" "}
+                    <span className="font-medium text-foreground">
+                      {claudeBinaryPath || "PATH"}
+                    </span>
+                  </p>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        claudeBinaryPath: defaults.claudeBinaryPath,
+                      })
+                    }
+                  >
+                    Reset Claude overrides
+                  </Button>
+                </div>
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

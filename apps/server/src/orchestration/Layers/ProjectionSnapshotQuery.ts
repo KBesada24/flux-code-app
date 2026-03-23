@@ -74,6 +74,8 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
   assistantMessageId: Schema.NullOr(MessageId),
+  sourceProposedPlanThreadId: Schema.NullOr(ProjectionThread.fields.threadId),
+  sourceProposedPlanId: Schema.NullOr(ProjectionThreadProposedPlan.fields.planId),
 });
 const ProjectionStateDbRowSchema = ProjectionState;
 
@@ -200,6 +202,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           turn_id AS "turnId",
           plan_markdown AS "planMarkdown",
+          implemented_at AS "implementedAt",
+          implementation_thread_id AS "implementationThreadId",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_proposed_plans
@@ -284,7 +288,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           requested_at AS "requestedAt",
           started_at AS "startedAt",
           completed_at AS "completedAt",
-          assistant_message_id AS "assistantMessageId"
+          assistant_message_id AS "assistantMessageId",
+          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          source_proposed_plan_id AS "sourceProposedPlanId"
         FROM projection_turns
         WHERE turn_id IS NOT NULL
         ORDER BY thread_id ASC, requested_at DESC, turn_id DESC
@@ -435,6 +441,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               id: row.planId,
               turnId: row.turnId,
               planMarkdown: row.planMarkdown,
+              implementedAt: row.implementedAt,
+              implementationThreadId: row.implementationThreadId,
               createdAt: row.createdAt,
               updatedAt: row.updatedAt,
             });
@@ -497,6 +505,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               startedAt: row.startedAt,
               completedAt: row.completedAt,
               assistantMessageId: row.assistantMessageId,
+              ...(row.sourceProposedPlanThreadId !== null && row.sourceProposedPlanId !== null
+                ? {
+                    sourceProposedPlan: {
+                      threadId: row.sourceProposedPlanThreadId,
+                      planId: row.sourceProposedPlanId,
+                    },
+                  }
+                : {}),
             });
           }
 

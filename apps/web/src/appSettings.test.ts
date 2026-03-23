@@ -53,6 +53,12 @@ describe("getAppModelOptions", () => {
     expect(options.some((option) => option.slug === "gpt-4o")).toBe(true);
     expect(options.some((option) => option.slug === "custom/copilot-model")).toBe(true);
   });
+
+  it("supports Claude built-in and custom models", () => {
+    const options = getAppModelOptions("claudeAgent", ["custom/claude-model"]);
+    expect(options.some((option) => option.slug === "claude-sonnet-4-6")).toBe(true);
+    expect(options.some((option) => option.slug === "custom/claude-model")).toBe(true);
+  });
 });
 
 describe("resolveAppModelSelection", () => {
@@ -68,6 +74,10 @@ describe("resolveAppModelSelection", () => {
 
   it("falls back to copilot default when no model is selected", () => {
     expect(resolveAppModelSelection("github-copilot", [], "")).toBe("gpt-4o");
+  });
+
+  it("falls back to Claude default when no model is selected", () => {
+    expect(resolveAppModelSelection("claudeAgent", [], "")).toBe("claude-sonnet-4-6");
   });
 });
 

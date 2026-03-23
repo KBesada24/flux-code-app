@@ -15,6 +15,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
+import { resolveExistingResourcePath } from "./resourcePaths";
 import {
   getAutoUpdateDisabledReason,
   shouldBroadcastDownloadProgress,
@@ -74,6 +75,7 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+let missingIconWarningLogged = false;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const initialUpdateState = (): DesktopUpdateState => createInitialDesktopUpdateState(app.getVersion());
@@ -553,23 +555,26 @@ function configureApplicationMenu(): void {
 }
 
 function resolveResourcePath(fileName: string): string | null {
-  const candidates = [
-    Path.join(__dirname, "../resources", fileName),
-    Path.join(process.resourcesPath, "resources", fileName),
-    Path.join(process.resourcesPath, fileName),
-  ];
-
-  for (const candidate of candidates) {
-    if (FS.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
+  return resolveExistingResourcePath(
+    fileName,
+    {
+      dirname: __dirname,
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+    },
+    FS.existsSync,
+  );
 }
 
 function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
-  return resolveResourcePath(`icon.${ext}`);
+  const iconPath = resolveResourcePath(`icon.${ext}`);
+  if (iconPath !== null || !app.isPackaged || missingIconWarningLogged) {
+    return iconPath;
+  }
+
+  missingIconWarningLogged = true;
+  writeDesktopLogHeader(`warning could not resolve packaged desktop icon icon.${ext}`);
+  return null;
 }
 
 function configureAppIdentity(): void {

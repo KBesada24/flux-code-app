@@ -5,9 +5,10 @@
     "dist",
     "dist-electron",
     "node_modules",
+    "apps/web/public/mockServiceWorker.js",
     "bun.lock",
     "*.tsbuildinfo",
     "**/routeTree.gen.ts"
   ],
-  "experimentalSortPackageJson": {}
+  "sortPackageJson": {}
 }

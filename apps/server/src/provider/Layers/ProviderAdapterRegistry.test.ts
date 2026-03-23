@@ -4,6 +4,7 @@ import { assertFailure } from "@effect/vitest/utils";
 
 import { Effect, Layer, Stream } from "effect";
 
+import { ClaudeAdapter, ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { CopilotAdapter, CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
@@ -45,6 +46,23 @@ const fakeCopilotAdapter: CopilotAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeClaudeAdapter: ClaudeAdapterShape = {
+  provider: "claudeAgent",
+  capabilities: { sessionModelSwitch: "in-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const layer = it.layer(
   Layer.mergeAll(
     Layer.provide(
@@ -52,6 +70,7 @@ const layer = it.layer(
       Layer.mergeAll(
         Layer.succeed(CodexAdapter, fakeCodexAdapter),
         Layer.succeed(CopilotAdapter, fakeCopilotAdapter),
+        Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
       ),
     ),
     NodeServices.layer,
@@ -66,7 +85,7 @@ layer("ProviderAdapterRegistryLive", (it) => {
       assert.equal(codex, fakeCodexAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex", "github-copilot"]);
+      assert.deepEqual(providers, ["codex", "github-copilot", "claudeAgent"]);
     }),
   );
 

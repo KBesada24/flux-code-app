@@ -10,6 +10,7 @@ import {
   type ServerConfig,
   type TerminalSessionSnapshot,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -255,6 +256,48 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createPlanFollowUpSnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-plan-target" as MessageId,
+    targetText: "plan target",
+  });
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) => ({
+      ...thread,
+      interactionMode: "plan" as const,
+      latestTurn: {
+        turnId: "turn-plan-1" as TurnId,
+        state: "completed" as const,
+        requestedAt: isoAt(100),
+        startedAt: isoAt(101),
+        completedAt: isoAt(102),
+        assistantMessageId: null,
+      },
+      proposedPlans: [
+        {
+          id: "plan-1",
+          turnId: "turn-plan-1" as TurnId,
+          planMarkdown: "# Ship it\n\n- step 1",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: isoAt(103),
+          updatedAt: isoAt(103),
+        },
+      ],
+      session: {
+        threadId: THREAD_ID,
+        status: "ready" as const,
+        providerName: "codex" as const,
+        runtimeMode: "full-access" as const,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: isoAt(104),
+      },
+    })),
   };
 }
 
@@ -978,6 +1021,103 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         async () => {
           expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("includes sourceProposedPlan on same-thread plan implementation follow-up", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createPlanFollowUpSnapshot(),
+    });
+
+    try {
+      const implementButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Implement",
+          ) as HTMLButtonElement | null,
+        "Unable to find Implement button.",
+      );
+      implementButton.click();
+
+      await vi.waitFor(
+        () => {
+          const request = wsRequests.find(
+            (entry) =>
+              entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              (entry.command as { type?: string } | undefined)?.type === "thread.turn.start",
+          ) as
+            | {
+                _tag: string;
+                command?: {
+                  sourceProposedPlan?: {
+                    threadId: ThreadId;
+                    planId: string;
+                  };
+                };
+              }
+            | undefined;
+
+          expect(request?.command?.sourceProposedPlan).toEqual({
+            threadId: THREAD_ID,
+            planId: "plan-1",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("includes sourceProposedPlan when implementing a plan in a new thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createPlanFollowUpSnapshot(),
+    });
+
+    try {
+      const menuButton = await waitForButtonByAriaLabel("Implementation actions");
+      menuButton.click();
+
+      const menuItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll('[role="menuitem"]')).find(
+            (item) => item.textContent?.trim() === "Implement in new thread",
+          ) as HTMLElement | null,
+        "Unable to find Implement in new thread action.",
+      );
+      menuItem.click();
+
+      await vi.waitFor(
+        () => {
+          const request = wsRequests.find(
+            (entry) =>
+              entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              (entry.command as { type?: string; threadId?: ThreadId } | undefined)?.type ===
+                "thread.turn.start" &&
+              (entry.command as { threadId?: ThreadId } | undefined)?.threadId !== THREAD_ID,
+          ) as
+            | {
+                _tag: string;
+                command?: {
+                  sourceProposedPlan?: {
+                    threadId: ThreadId;
+                    planId: string;
+                  };
+                };
+              }
+            | undefined;
+
+          expect(request?.command?.sourceProposedPlan).toEqual({
+            threadId: THREAD_ID,
+            planId: "plan-1",
+          });
         },
         { timeout: 8_000, interval: 16 },
       );

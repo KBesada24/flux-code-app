@@ -407,6 +407,51 @@ describe("composerDraftStore setProvider", () => {
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
+
+  it("persists Claude provider selections", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "claudeAgent");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.provider).toBe(
+      "claudeAgent",
+    );
+  });
+});
+
+describe("composerDraftStore effort", () => {
+  const threadId = ThreadId.makeUnsafe("thread-effort");
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+  });
+
+  it("stores Claude effort overrides for Claude drafts", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "claudeAgent");
+    store.setEffort(threadId, "ultrathink");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBe(
+      "ultrathink",
+    );
+  });
+
+  it("drops default Claude effort from persisted draft state", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProvider(threadId, "claudeAgent");
+    store.setEffort(threadId, "high");
+
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+      provider: "claudeAgent",
+      effort: null,
+    });
+  });
 });
 
 describe("composerDraftStore runtime and interaction settings", () => {

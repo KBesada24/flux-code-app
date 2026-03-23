@@ -1,16 +1,18 @@
 import {
   ApprovalRequestId,
   type OrchestrationLatestTurn,
+  type SourceProposedPlanReference,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   type ProviderKind,
   type UserInputQuestion,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 
 import type { ChatMessage, ProposedPlan, SessionPhase, ThreadSession, TurnDiffSummary } from "./types";
 
-export type ProviderPickerKind = ProviderKind | "claudeCode" | "cursor";
+export type ProviderPickerKind = ProviderKind | "cursor";
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
@@ -19,7 +21,7 @@ export const PROVIDER_OPTIONS: Array<{
 }> = [
   { value: "codex", label: "Codex", available: true },
   { value: "github-copilot", label: "GitHub Copilot", available: true },
-  { value: "claudeCode", label: "Claude Code", available: false },
+  { value: "claudeAgent", label: "Claude Agent", available: true },
   { value: "cursor", label: "Cursor", available: false },
 ];
 
@@ -62,6 +64,8 @@ export interface LatestProposedPlanState {
   updatedAt: string;
   turnId: TurnId | null;
   planMarkdown: string;
+  implementedAt: string | null;
+  implementationThreadId: ThreadId | null;
 }
 
 export type TimelineEntry =
@@ -365,8 +369,9 @@ export function findLatestProposedPlan(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   latestTurnId: TurnId | string | null | undefined,
 ): LatestProposedPlanState | null {
+  const actionablePlans = proposedPlans.filter((proposedPlan) => proposedPlan.implementedAt === null);
   if (latestTurnId) {
-    const matchingTurnPlan = [...proposedPlans]
+    const matchingTurnPlan = [...actionablePlans]
       .filter((proposedPlan) => proposedPlan.turnId === latestTurnId)
       .toSorted(
         (left, right) =>
@@ -380,11 +385,13 @@ export function findLatestProposedPlan(
         updatedAt: matchingTurnPlan.updatedAt,
         turnId: matchingTurnPlan.turnId,
         planMarkdown: matchingTurnPlan.planMarkdown,
+        implementedAt: matchingTurnPlan.implementedAt,
+        implementationThreadId: matchingTurnPlan.implementationThreadId,
       };
     }
   }
 
-  const latestPlan = [...proposedPlans]
+  const latestPlan = [...actionablePlans]
     .toSorted(
       (left, right) =>
         left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
@@ -400,7 +407,26 @@ export function findLatestProposedPlan(
     updatedAt: latestPlan.updatedAt,
     turnId: latestPlan.turnId,
     planMarkdown: latestPlan.planMarkdown,
+    implementedAt: latestPlan.implementedAt,
+    implementationThreadId: latestPlan.implementationThreadId,
   };
+}
+
+export function findProposedPlanByReference(
+  threads: ReadonlyArray<{ id: string; proposedPlans: ReadonlyArray<ProposedPlan> }>,
+  sourceProposedPlan: SourceProposedPlanReference | undefined,
+): ProposedPlan | null {
+  if (!sourceProposedPlan) {
+    return null;
+  }
+  const sourceThread = threads.find((thread) => thread.id === sourceProposedPlan.threadId);
+  if (!sourceThread) {
+    return null;
+  }
+  return (
+    sourceThread.proposedPlans.find((proposedPlan) => proposedPlan.id === sourceProposedPlan.planId) ??
+    null
+  );
 }
 
 export function deriveWorkLogEntries(

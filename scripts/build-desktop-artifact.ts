@@ -8,7 +8,7 @@ import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
-import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+import { createDesktopBuildConfig } from "./lib/desktop-build-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -22,19 +22,6 @@ const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
-);
-const ProductionMacIconSource = Effect.zipWith(RepoRoot, Effect.service(Path.Path), (repoRoot, path) =>
-  path.join(repoRoot, BRAND_ASSET_PATHS.productionMacIconPng),
-);
-const ProductionLinuxIconSource = Effect.zipWith(
-  RepoRoot,
-  Effect.service(Path.Path),
-  (repoRoot, path) => path.join(repoRoot, BRAND_ASSET_PATHS.productionLinuxIconPng),
-);
-const ProductionWindowsIconSource = Effect.zipWith(
-  RepoRoot,
-  Effect.service(Path.Path),
-  (repoRoot, path) => path.join(repoRoot, BRAND_ASSET_PATHS.productionWindowsIconIco),
 );
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 
@@ -267,102 +254,6 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Comm
   }
 });
 
-function generateMacIconSet(
-  sourcePng: string,
-  targetIcns: string,
-  tmpRoot: string,
-  path: Path.Path,
-  verbose: boolean,
-) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const iconsetDir = path.join(tmpRoot, "icon.iconset");
-    yield* fs.makeDirectory(iconsetDir, { recursive: true });
-
-    const iconSizes = [16, 32, 128, 256, 512] as const;
-    for (const size of iconSizes) {
-      yield* runCommand(
-        ChildProcess.make({
-          ...commandOutputOptions(verbose),
-        })`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
-      );
-
-      const retinaSize = size * 2;
-      yield* runCommand(
-        ChildProcess.make({
-          ...commandOutputOptions(verbose),
-        })`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
-      );
-    }
-
-    yield* runCommand(
-      ChildProcess.make({
-        ...commandOutputOptions(verbose),
-      })`iconutil -c icns ${iconsetDir} -o ${targetIcns}`,
-    );
-  });
-}
-
-function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const iconSource = yield* ProductionMacIconSource;
-    if (!(yield* fs.exists(iconSource))) {
-      return yield* new BuildScriptError({
-        message: `Production icon source is missing at ${iconSource}`,
-      });
-    }
-
-    const tmpRoot = yield* fs.makeTempDirectoryScoped({
-      prefix: "t3code-icon-build-",
-    });
-
-    const iconPngPath = path.join(stageResourcesDir, "icon.png");
-    const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
-
-    yield* runCommand(
-      ChildProcess.make({
-        ...commandOutputOptions(verbose),
-      })`sips -z 512 512 ${iconSource} --out ${iconPngPath}`,
-    );
-
-    yield* generateMacIconSet(iconSource, iconIcnsPath, tmpRoot, path, verbose);
-  });
-}
-
-function stageLinuxIcons(stageResourcesDir: string) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const iconSource = yield* ProductionLinuxIconSource;
-    if (!(yield* fs.exists(iconSource))) {
-      return yield* new BuildScriptError({
-        message: `Production icon source is missing at ${iconSource}`,
-      });
-    }
-
-    const iconPath = path.join(stageResourcesDir, "icon.png");
-    yield* fs.copyFile(iconSource, iconPath);
-  });
-}
-
-function stageWindowsIcons(stageResourcesDir: string) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const iconSource = yield* ProductionWindowsIconSource;
-    if (!(yield* fs.exists(iconSource))) {
-      return yield* new BuildScriptError({
-        message: `Production Windows icon source is missing at ${iconSource}`,
-      });
-    }
-
-    const iconPath = path.join(stageResourcesDir, "icon.ico");
-    yield* fs.copyFile(iconSource, iconPath);
-  });
-}
-
 function validateBundledClientAssets(clientDir: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -446,52 +337,16 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   productName: string,
   signed: boolean,
 ) {
-  const buildConfig: Record<string, unknown> = {
-    appId: "com.t3tools.t3code",
-    productName,
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
-    directories: {
-      buildResources: "apps/desktop/resources",
-    },
-    // Skip @electron/rebuild: node-pty ships prebuilds for macOS/Windows and loads
-    // them at runtime via process.arch detection; msgpackr-extract gracefully
-    // falls back to pure-JS when no ARM64 native binary is present.
-    // Linux has no prebuilds, so node-pty is rebuilt explicitly after npm install (see below).
-    npmRebuild: false,
-  };
   const publishConfig = resolveGitHubPublishConfig();
-  if (publishConfig) {
-    buildConfig.publish = [publishConfig];
-  }
-
-  if (platform === "mac") {
-    buildConfig.mac = {
-      target: target === "dmg" ? [target, "zip"] : [target],
-      icon: "icon.icns",
-      category: "public.app-category.developer-tools",
-    };
-  }
-
-  if (platform === "linux") {
-    buildConfig.linux = {
-      target: [target],
-      icon: "icon.png",
-      category: "Development",
-    };
-    buildConfig.asarUnpack = [
-      "node_modules/node-pty/build/**",
-      "node_modules/node-pty/prebuilds/**",
-    ];
-  }
-
-  if (platform === "win") {
-    const winConfig: Record<string, unknown> = {
-      target: [target],
-      icon: "icon.ico",
-    };
-    if (signed) {
-      winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
-    }
+  const buildConfig = createDesktopBuildConfig({
+    platform,
+    target,
+    productName,
+    ...(publishConfig ? { publishConfig } : {}),
+  });
+  if (platform === "win" && signed) {
+    const winConfig: Record<string, unknown> = buildConfig.win ?? {};
+    winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
     buildConfig.win = winConfig;
   }
 
@@ -501,20 +356,17 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(function* (
   platform: typeof BuildPlatform.Type,
   stageResourcesDir: string,
-  verbose: boolean,
 ) {
-  if (platform === "mac") {
-    yield* stageMacIcons(stageResourcesDir, verbose);
-    return;
-  }
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const expectedFileName =
+    platform === "mac" ? "icon.icns" : platform === "linux" ? "icon.png" : "icon.ico";
+  const resourcePath = path.join(stageResourcesDir, expectedFileName);
 
-  if (platform === "linux") {
-    yield* stageLinuxIcons(stageResourcesDir);
-    return;
-  }
-
-  if (platform === "win") {
-    yield* stageWindowsIcons(stageResourcesDir);
+  if (!(yield* fs.exists(resourcePath))) {
+    return yield* new BuildScriptError({
+      message: `Desktop build resource is missing at ${resourcePath}.`,
+    });
   }
 });
 
@@ -617,10 +469,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
-  yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
+  yield* assertPlatformBuildResources(options.platform, stageResourcesDir);
 
   const stagePackageJson: StagePackageJson = {
-    name: "t3-code-desktop",
+    name: "t3code",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,

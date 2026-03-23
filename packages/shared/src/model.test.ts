@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_MODEL_BY_PROVIDER, MODEL_OPTIONS_BY_PROVIDER } from "@t3tools/contracts";
 
 import {
+  applyClaudePromptEffortPrefix,
   getDefaultModel,
   getDefaultReasoningEffort,
+  getEffectiveClaudeCodeEffort,
   getModelOptions,
   getReasoningEffortOptions,
+  inferProviderForModel,
   normalizeModelSlug,
   resolveModelSlug,
 } from "./model";
@@ -14,6 +17,7 @@ describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
+    expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
   });
 
   it("returns null for empty or missing values", () => {
@@ -73,11 +77,44 @@ describe("getReasoningEffortOptions", () => {
   it("returns no reasoning options for copilot", () => {
     expect(getReasoningEffortOptions("github-copilot")).toEqual([]);
   });
+
+  it("returns Claude reasoning options based on model capability", () => {
+    expect(getReasoningEffortOptions("claudeAgent", "claude-opus-4-6")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+      "ultrathink",
+    ]);
+    expect(getReasoningEffortOptions("claudeAgent", "claude-sonnet-4-6")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "ultrathink",
+    ]);
+    expect(getReasoningEffortOptions("claudeAgent", "claude-haiku-4-5")).toEqual([]);
+  });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
     expect(getDefaultReasoningEffort("github-copilot")).toBeNull();
+    expect(getDefaultReasoningEffort("claudeAgent")).toBe("high");
+  });
+});
+
+describe("inferProviderForModel", () => {
+  it("infers Claude provider models from the model slug", () => {
+    expect(inferProviderForModel("claude-opus-4-6")).toBe("claudeAgent");
+  });
+});
+
+describe("Claude effort helpers", () => {
+  it("maps ultrathink to prompt prefix instead of SDK effort", () => {
+    expect(getEffectiveClaudeCodeEffort("ultrathink")).toBeNull();
+    expect(applyClaudePromptEffortPrefix("Review this change", "ultrathink")).toBe(
+      "Ultrathink:\nReview this change",
+    );
   });
 });

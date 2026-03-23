@@ -13,6 +13,7 @@ import {
   ChatAttachment,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ProviderStartOptions,
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderInteractionMode,
@@ -56,15 +57,6 @@ export const ProviderChatMessage = Schema.Struct({
   text: Schema.String,
 });
 export type ProviderChatMessage = typeof ProviderChatMessage.Type;
-
-const CodexProviderStartOptions = Schema.Struct({
-  binaryPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  homePath: Schema.optional(TrimmedNonEmptyStringSchema),
-});
-
-const ProviderStartOptions = Schema.Struct({
-  codex: Schema.optional(CodexProviderStartOptions),
-});
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,

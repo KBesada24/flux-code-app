@@ -42,6 +42,27 @@ describe("ProviderSessionStartInput", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts Claude session start options", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      runtimeMode: "full-access",
+      providerOptions: {
+        claudeAgent: {
+          binaryPath: "/usr/local/bin/claude",
+          permissionMode: "acceptEdits",
+          maxThinkingTokens: 4096,
+        },
+      },
+    });
+
+    expect(parsed.provider).toBe("claudeAgent");
+    expect(parsed.providerOptions?.claudeAgent?.binaryPath).toBe("/usr/local/bin/claude");
+    expect(parsed.providerOptions?.claudeAgent?.permissionMode).toBe("acceptEdits");
+    expect(parsed.providerOptions?.claudeAgent?.maxThinkingTokens).toBe(4096);
+  });
 });
 
 describe("ProviderSendTurnInput", () => {
@@ -75,5 +96,20 @@ describe("ProviderSendTurnInput", () => {
 
     expect(parsed.history?.length).toBe(3);
     expect(parsed.history?.[0]?.role).toBe("system");
+  });
+
+  it("accepts Claude model options", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      model: "claude-sonnet-4-6",
+      modelOptions: {
+        claudeAgent: {
+          effort: "ultrathink",
+        },
+      },
+    });
+
+    expect(parsed.model).toBe("claude-sonnet-4-6");
+    expect(parsed.modelOptions?.claudeAgent?.effort).toBe("ultrathink");
   });
 });

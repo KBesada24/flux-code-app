@@ -1720,7 +1720,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
-it.effect("restores pending turn-start metadata across projection pipeline restart", () =>
+  it.effect("restores pending turn-start metadata across projection pipeline restart", () =>
   Effect.gen(function* () {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-pipeline-restart-"));
     const dbPath = path.join(tempDir, "orchestration.sqlite");
@@ -1879,6 +1879,143 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         WHERE projector = 'projection.projects'
       `;
       assert.deepEqual(projectorRows, [{ lastAppliedSequence: 1 }]);
+    }),
+  );
+
+  it.effect("persists source proposed plan linkage and implementation metadata in projections", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const requestedAt = "2026-02-26T15:00:00.000Z";
+      const startedAt = "2026-02-26T15:00:05.000Z";
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-source-plan-project-create"),
+        projectId: ProjectId.makeUnsafe("project-source-plan"),
+        title: "Project",
+        workspaceRoot: "/tmp/project-source-plan",
+        defaultModel: "gpt-5-codex",
+        createdAt: requestedAt,
+      });
+
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-source-plan-thread-source-create"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        projectId: ProjectId.makeUnsafe("project-source-plan"),
+        title: "Source Thread",
+        model: "gpt-5-codex",
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: requestedAt,
+      });
+
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-source-plan-thread-target-create"),
+        threadId: ThreadId.makeUnsafe("thread-target"),
+        projectId: ProjectId.makeUnsafe("project-source-plan"),
+        title: "Target Thread",
+        model: "gpt-5-codex",
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: requestedAt,
+      });
+
+      yield* engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.makeUnsafe("cmd-source-plan-upserted"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        proposedPlan: {
+          id: "plan-1",
+          turnId: TurnId.makeUnsafe("turn-source"),
+          planMarkdown: "# Plan",
+          implementedAt: startedAt,
+          implementationThreadId: ThreadId.makeUnsafe("thread-target"),
+          createdAt: requestedAt,
+          updatedAt: startedAt,
+        },
+        createdAt: startedAt,
+      });
+
+      yield* engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-source-plan-turn-start-requested"),
+        threadId: ThreadId.makeUnsafe("thread-target"),
+        message: {
+          messageId: MessageId.makeUnsafe("message-target"),
+          role: "user",
+          text: "Implement it",
+          attachments: [],
+        },
+        sourceProposedPlan: {
+          threadId: ThreadId.makeUnsafe("thread-source"),
+          planId: "plan-1",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: requestedAt,
+      });
+
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-source-plan-session-set"),
+        threadId: ThreadId.makeUnsafe("thread-target"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-target"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: TurnId.makeUnsafe("turn-target"),
+          lastError: null,
+          updatedAt: startedAt,
+        },
+        createdAt: startedAt,
+      });
+
+      const turnRows = yield* sql<{
+        readonly pendingMessageId: string | null;
+        readonly sourceProposedPlanThreadId: string | null;
+        readonly sourceProposedPlanId: string | null;
+      }>`
+        SELECT
+          pending_message_id AS "pendingMessageId",
+          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          source_proposed_plan_id AS "sourceProposedPlanId"
+        FROM projection_turns
+        WHERE thread_id = 'thread-target'
+          AND turn_id = 'turn-target'
+      `;
+      assert.deepEqual(turnRows, [
+        {
+          pendingMessageId: "message-target",
+          sourceProposedPlanThreadId: "thread-source",
+          sourceProposedPlanId: "plan-1",
+        },
+      ]);
+
+      const proposedPlanRows = yield* sql<{
+        readonly implementedAt: string | null;
+        readonly implementationThreadId: string | null;
+      }>`
+        SELECT
+          implemented_at AS "implementedAt",
+          implementation_thread_id AS "implementationThreadId"
+        FROM projection_thread_proposed_plans
+        WHERE thread_id = 'thread-source'
+          AND plan_id = 'plan-1'
+      `;
+      assert.deepEqual(proposedPlanRows, [
+        {
+          implementedAt: startedAt,
+          implementationThreadId: "thread-target",
+        },
+      ]);
     }),
   );
 

@@ -154,6 +154,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
@@ -690,6 +691,276 @@ describe("ProviderRuntimeIngestion", () => {
       (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-plan-buffer",
     );
     expect(proposedPlan?.planMarkdown).toBe("## Buffered plan\n\n- first\n- second");
+  });
+
+  it("leaves a source plan unimplemented before an accepted turn.started arrives", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.makeUnsafe("cmd-seed-source-plan-pending"),
+        threadId: asThreadId("thread-1"),
+        proposedPlan: {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "# Ship it",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-start-source-plan-pending"),
+        threadId: asThreadId("thread-1"),
+        message: {
+          messageId: asMessageId("message-source-plan-pending"),
+          role: "user",
+          text: "Implement the plan",
+          attachments: [],
+        },
+        sourceProposedPlan: {
+          threadId: asThreadId("thread-1"),
+          planId: "plan-1",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const sourcePlan = readModel.threads
+      .find((thread) => thread.id === "thread-1")
+      ?.proposedPlans.find((proposedPlan) => proposedPlan.id === "plan-1");
+
+    expect(sourcePlan?.implementedAt).toBeNull();
+    expect(sourcePlan?.implementationThreadId).toBeNull();
+  });
+
+  it("marks a source plan implemented after an accepted turn.started", async () => {
+    const harness = await createHarness();
+    const requestedAt = new Date().toISOString();
+    const startedAt = new Date(Date.parse(requestedAt) + 1_000).toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.makeUnsafe("cmd-seed-source-plan-accepted"),
+        threadId: asThreadId("thread-1"),
+        proposedPlan: {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "# Ship it",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: requestedAt,
+          updatedAt: requestedAt,
+        },
+        createdAt: requestedAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-start-source-plan-accepted"),
+        threadId: asThreadId("thread-1"),
+        message: {
+          messageId: asMessageId("message-source-plan-accepted"),
+          role: "user",
+          text: "Implement the plan",
+          attachments: [],
+        },
+        sourceProposedPlan: {
+          threadId: asThreadId("thread-1"),
+          planId: "plan-1",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: requestedAt,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-source-plan-accepted"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: startedAt,
+      turnId: asTurnId("turn-source-plan-accepted"),
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.proposedPlans.some(
+        (proposedPlan) =>
+          proposedPlan.id === "plan-1" &&
+          proposedPlan.implementedAt === startedAt &&
+          proposedPlan.implementationThreadId === "thread-1",
+      ),
+    );
+    const sourcePlan = thread.proposedPlans.find((proposedPlan) => proposedPlan.id === "plan-1");
+
+    expect(sourcePlan?.implementedAt).toBe(startedAt);
+    expect(sourcePlan?.implementationThreadId).toBe("thread-1");
+  });
+
+  it("does not mark a source plan implemented for an unrelated turn.started", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.makeUnsafe("cmd-seed-source-plan-unrelated"),
+        threadId: asThreadId("thread-1"),
+        proposedPlan: {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "# Ship it",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-running-turn-existing"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-existing"),
+          updatedAt: now,
+          lastError: null,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-start-source-plan-unrelated"),
+        threadId: asThreadId("thread-1"),
+        message: {
+          messageId: asMessageId("message-source-plan-unrelated"),
+          role: "user",
+          text: "Implement the plan",
+          attachments: [],
+        },
+        sourceProposedPlan: {
+          threadId: asThreadId("thread-1"),
+          planId: "plan-1",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-source-plan-unrelated"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date(Date.parse(now) + 1_000).toISOString(),
+      turnId: asTurnId("turn-other"),
+    });
+
+    await Effect.runPromise(Effect.sleep("50 millis"));
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const sourcePlan = readModel.threads
+      .find((thread) => thread.id === "thread-1")
+      ?.proposedPlans.find((proposedPlan) => proposedPlan.id === "plan-1");
+
+    expect(sourcePlan?.implementedAt).toBeNull();
+    expect(sourcePlan?.implementationThreadId).toBeNull();
+  });
+
+  it("does not overwrite an already implemented source plan", async () => {
+    const harness = await createHarness();
+    const requestedAt = new Date().toISOString();
+    const originalImplementedAt = new Date(Date.parse(requestedAt) - 5_000).toISOString();
+    const startedAt = new Date(Date.parse(requestedAt) + 1_000).toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.makeUnsafe("cmd-seed-source-plan-implemented"),
+        threadId: asThreadId("thread-1"),
+        proposedPlan: {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "# Ship it",
+          implementedAt: originalImplementedAt,
+          implementationThreadId: asThreadId("thread-existing"),
+          createdAt: requestedAt,
+          updatedAt: originalImplementedAt,
+        },
+        createdAt: requestedAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-start-source-plan-implemented"),
+        threadId: asThreadId("thread-1"),
+        message: {
+          messageId: asMessageId("message-source-plan-implemented"),
+          role: "user",
+          text: "Implement the plan",
+          attachments: [],
+        },
+        sourceProposedPlan: {
+          threadId: asThreadId("thread-1"),
+          planId: "plan-1",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: requestedAt,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-source-plan-implemented"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: startedAt,
+      turnId: asTurnId("turn-source-plan-implemented"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-source-plan-implemented",
+    );
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const sourcePlan = readModel.threads
+      .find((thread) => thread.id === "thread-1")
+      ?.proposedPlans.find((proposedPlan) => proposedPlan.id === "plan-1");
+
+    expect(sourcePlan?.implementedAt).toBe(originalImplementedAt);
+    expect(sourcePlan?.implementationThreadId).toBe("thread-existing");
   });
 
   it("buffers assistant deltas by default until completion", async () => {

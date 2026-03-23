@@ -18,6 +18,7 @@ import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/Proj
 import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion";
 import { ProviderUnsupportedError } from "./provider/Errors";
+import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { CopilotAdapterLive } from "./provider/Layers/CopilotAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
@@ -61,9 +62,11 @@ export function makeServerProviderLayer(): Layer.Layer<
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
     const copilotAdapterLayer = CopilotAdapterLive;
+    const claudeAdapterLayer = makeClaudeAdapterLive();
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(codexAdapterLayer),
       Layer.provide(copilotAdapterLayer),
+      Layer.provide(claudeAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
     return makeProviderServiceLive(

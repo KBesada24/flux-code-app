@@ -38,6 +38,7 @@ Name=T3 Code (Alpha)
 Comment=AI-powered code editor
 Exec=$INSTALL_DIR/t3code.AppImage
 Icon=t3code
+StartupWMClass=t3code
 Type=Application
 Categories=Development;IDE;
 Terminal=false

@@ -5,6 +5,8 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationLatestTurn,
+  OrchestrationProposedPlan,
   OrchestrationGetTurnDiffInput,
   OrchestrationSession,
   ProjectCreateCommand,
@@ -21,6 +23,8 @@ const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartC
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
+const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
+const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 
@@ -140,6 +144,31 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("accepts source proposed plan reference in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-source-plan",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-source-plan",
+        role: "user",
+        text: "implement it",
+        attachments: [],
+      },
+      sourceProposedPlan: {
+        threadId: "thread-plan",
+        planId: "plan-1",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-plan",
+      planId: "plan-1",
+    });
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({
@@ -186,6 +215,40 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
+it.effect("accepts Claude provider options and model options in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-claude",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-claude",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      modelOptions: {
+        claudeAgent: {
+          effort: "ultrathink",
+        },
+      },
+      providerOptions: {
+        claudeAgent: {
+          binaryPath: "/usr/local/bin/claude",
+          permissionMode: "acceptEdits",
+          maxThinkingTokens: 8192,
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.provider, "claudeAgent");
+    assert.strictEqual(parsed.modelOptions?.claudeAgent?.effort, "ultrathink");
+    assert.strictEqual(parsed.providerOptions?.claudeAgent?.binaryPath, "/usr/local/bin/claude");
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>
@@ -199,6 +262,75 @@ it.effect(
       assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
     }),
+);
+
+it.effect("decodes thread.turn-start-requested source proposed plan", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartRequestedPayload({
+      threadId: "thread-1",
+      messageId: "msg-1",
+      sourceProposedPlan: {
+        threadId: "thread-plan",
+        planId: "plan-1",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-plan",
+      planId: "plan-1",
+    });
+  }),
+);
+
+it.effect("decodes latest turn source proposed plan", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationLatestTurn({
+      turnId: "turn-1",
+      state: "running",
+      requestedAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:01.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+      sourceProposedPlan: {
+        threadId: "thread-plan",
+        planId: "plan-1",
+      },
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-plan",
+      planId: "plan-1",
+    });
+  }),
+);
+
+it.effect("historical proposed plans default implementation metadata to null", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProposedPlan({
+      id: "plan-1",
+      turnId: "turn-1",
+      planMarkdown: "# Plan",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.implementedAt, null);
+    assert.strictEqual(parsed.implementationThreadId, null);
+  }),
+);
+
+it.effect("proposed plans preserve implementation metadata when present", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProposedPlan({
+      id: "plan-1",
+      turnId: "turn-1",
+      planMarkdown: "# Plan",
+      implementedAt: "2026-01-01T00:00:05.000Z",
+      implementationThreadId: "thread-impl",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:05.000Z",
+    });
+    assert.strictEqual(parsed.implementedAt, "2026-01-01T00:00:05.000Z");
+    assert.strictEqual(parsed.implementationThreadId, "thread-impl");
+  }),
 );
 
 it.effect("decodes orchestration session runtime mode defaults", () =>
