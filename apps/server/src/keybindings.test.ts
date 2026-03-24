@@ -341,6 +341,43 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("deletes a custom keybinding rule by command", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]);
+
+      const resolved = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.deleteKeybindingRule("script.run-tests.run");
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [{ key: "mod+j", command: "terminal.toggle" }]);
+      assert.isFalse(resolved.some((entry) => entry.command === "script.run-tests.run"));
+      assert.isTrue(resolved.some((entry) => entry.command === "terminal.toggle"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("treats deleting a missing keybinding command as a no-op", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, []);
+
+      const resolved = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.deleteKeybindingRule("script.run-tests.run");
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepEqual(persisted, []);
+      assert.isTrue(resolved.some((entry) => entry.command === "terminal.toggle"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("refuses to overwrite malformed keybindings config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -353,6 +390,23 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           key: "mod+shift+r",
           command: "script.run-tests.run",
         });
+      }).pipe(toDetailResult);
+      assertFailure(result, "expected JSON array");
+
+      const persistedRaw = yield* fs.readFileString(keybindingsConfigPath);
+      assert.equal(persistedRaw, "{ not-json");
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("refuses to delete from a malformed keybindings config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* fs.writeFileString(keybindingsConfigPath, "{ not-json");
+
+      const result = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.deleteKeybindingRule("script.run-tests.run");
       }).pipe(toDetailResult);
       assertFailure(result, "expected JSON array");
 

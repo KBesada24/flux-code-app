@@ -1604,11 +1604,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const persistProjectScripts = useCallback(
     async (input: {
       projectId: ProjectId;
-      projectCwd: string;
-      previousScripts: ProjectScript[];
       nextScripts: ProjectScript[];
-      keybinding?: string | null;
-      keybindingCommand: KeybindingCommand;
+      keybindingMutation:
+        | {
+            type: "none";
+          }
+        | {
+            type: "upsert";
+            keybinding: string | null;
+            command: KeybindingCommand;
+          }
+        | {
+            type: "delete";
+            command: KeybindingCommand;
+          };
     }) => {
       const api = readNativeApi();
       if (!api) return;
@@ -1620,15 +1629,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
-        keybinding: input.keybinding,
-        command: input.keybindingCommand,
-      });
-
-      if (isElectron && keybindingRule) {
-        await api.server.upsertKeybinding(keybindingRule);
-        await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
+      if (!isElectron || input.keybindingMutation.type === "none") {
+        return;
       }
+
+      if (input.keybindingMutation.type === "upsert") {
+        const keybindingRule = decodeProjectScriptKeybindingRule({
+          keybinding: input.keybindingMutation.keybinding,
+          command: input.keybindingMutation.command,
+        });
+        if (keybindingRule) {
+          await api.server.upsertKeybinding(keybindingRule);
+          await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
+        }
+        return;
+      }
+
+      await api.server.deleteKeybinding({
+        command: input.keybindingMutation.command,
+      });
+      await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
     },
     [queryClient],
   );
@@ -1657,11 +1677,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       await persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.cwd,
-        previousScripts: activeProject.scripts,
         nextScripts,
-        keybinding: input.keybinding,
-        keybindingCommand: commandForProjectScript(nextId),
+        keybindingMutation: {
+          type: "upsert",
+          keybinding: input.keybinding,
+          command: commandForProjectScript(nextId),
+        },
       });
     },
     [activeProject, persistProjectScripts],
@@ -1691,11 +1712,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       await persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.cwd,
-        previousScripts: activeProject.scripts,
         nextScripts,
-        keybinding: input.keybinding,
-        keybindingCommand: commandForProjectScript(scriptId),
+        keybindingMutation: {
+          type: "upsert",
+          keybinding: input.keybinding,
+          command: commandForProjectScript(scriptId),
+        },
+      });
+    },
+    [activeProject, persistProjectScripts],
+  );
+  const deleteProjectScript = useCallback(
+    async (scriptId: string) => {
+      if (!activeProject) {
+        throw new Error("Project not found.");
+      }
+      const existingScript = activeProject.scripts.find((script) => script.id === scriptId);
+      if (!existingScript) {
+        throw new Error("Script not found.");
+      }
+
+      const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
+      await persistProjectScripts({
+        projectId: activeProject.id,
+        nextScripts,
+        keybindingMutation: {
+          type: "delete",
+          command: commandForProjectScript(scriptId),
+        },
       });
     },
     [activeProject, persistProjectScripts],
@@ -3528,6 +3572,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
+          onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
         />
@@ -4116,6 +4161,7 @@ interface ChatHeaderProps {
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
+  onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
 }
@@ -4139,6 +4185,7 @@ const ChatHeader = memo(function ChatHeader({
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
+  onDeleteProjectScript,
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
@@ -4177,6 +4224,7 @@ const ChatHeader = memo(function ChatHeader({
             onRunScript={onRunProjectScript}
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
+            onDeleteScript={onDeleteProjectScript}
           />
         )}
         {activeProjectName && (

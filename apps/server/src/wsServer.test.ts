@@ -1064,6 +1064,58 @@ describe("WebSocket Server", () => {
     );
   });
 
+  it("deletes keybinding rules and updates cached server config", async () => {
+    const stateDir = makeTempDir("t3code-state-delete-keybinding-");
+    const keybindingsPath = path.join(stateDir, "keybindings.json");
+    fs.writeFileSync(
+      keybindingsPath,
+      JSON.stringify([
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+shift+r", command: "script.run-tests.run" },
+      ]),
+      "utf8",
+    );
+
+    server = await createTestServer({ cwd: "/my/workspace", stateDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const deleteResponse = await sendRequest(ws, WS_METHODS.serverDeleteKeybinding, {
+      command: "script.run-tests.run",
+    });
+    expect(deleteResponse.error).toBeUndefined();
+    const persistedConfig = JSON.parse(
+      fs.readFileSync(keybindingsPath, "utf8"),
+    ) as KeybindingsConfig;
+    const persistedCommands = new Set(persistedConfig.map((entry) => entry.command));
+    for (const defaultRule of DEFAULT_KEYBINDINGS) {
+      expect(persistedCommands.has(defaultRule.command)).toBe(true);
+    }
+    expect(persistedCommands.has("script.run-tests.run")).toBe(false);
+    expect(deleteResponse.result).toEqual({
+      keybindings: compileKeybindings(persistedConfig),
+      issues: [],
+    });
+
+    const configResponse = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(configResponse.error).toBeUndefined();
+    expect(configResponse.result).toEqual({
+      cwd: "/my/workspace",
+      keybindingsConfigPath: keybindingsPath,
+      keybindings: compileKeybindings(persistedConfig),
+      issues: [],
+      providers: defaultProviderStatuses,
+      availableEditors: expect.any(Array),
+    });
+    expectAvailableEditors(
+      (configResponse.result as { availableEditors: unknown }).availableEditors,
+    );
+  });
+
   it("returns error for unknown methods", async () => {
     server = await createTestServer({ cwd: "/test" });
     const addr = server.address();

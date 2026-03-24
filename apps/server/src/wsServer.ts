@@ -909,6 +909,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           availableEditors,
         };
 
+      case WS_METHODS.serverDeleteKeybinding: {
+        const body = stripRequestTag(request.body);
+        const keybindingsConfig = yield* keybindingsManager.deleteKeybindingRule(body.command);
+        return { keybindings: keybindingsConfig, issues: [] };
+      }
+
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);

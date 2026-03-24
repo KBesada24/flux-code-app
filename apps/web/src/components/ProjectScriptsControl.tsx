@@ -12,6 +12,7 @@ import {
   PlayIcon,
   PlusIcon,
   SettingsIcon,
+  Trash2Icon,
   WrenchIcon,
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
@@ -28,6 +29,15 @@ import {
 import { shortcutLabelForCommand } from "~/keybindings";
 import { isMacPlatform } from "~/lib/utils";
 import { Button } from "./ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import {
   Dialog,
   DialogDescription,
@@ -84,6 +94,7 @@ interface ProjectScriptsControlProps {
   onRunScript: (script: ProjectScript) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<void> | void;
   onUpdateScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void> | void;
+  onDeleteScript: (scriptId: string) => Promise<void> | void;
 }
 
 function normalizeShortcutKeyToken(key: string): string | null {
@@ -144,16 +155,19 @@ export default function ProjectScriptsControl({
   onRunScript,
   onAddScript,
   onUpdateScript,
+  onDeleteScript,
 }: ProjectScriptsControlProps) {
   const addScriptFormId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
   const [keybinding, setKeybinding] = useState("");
+  const [pendingAction, setPendingAction] = useState<"save" | "delete" | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const primaryScript = useMemo(() => {
@@ -164,6 +178,7 @@ export default function ProjectScriptsControl({
     return primaryProjectScript(scripts);
   }, [preferredScriptId, scripts]);
   const isEditing = editingScriptId !== null;
+  const isPending = pendingAction !== null;
   const dropdownItemClassName =
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
 
@@ -181,6 +196,7 @@ export default function ProjectScriptsControl({
 
   const submitAddScript = async (event: FormEvent) => {
     event.preventDefault();
+    if (isPending) return;
     const trimmedName = name.trim();
     const trimmedCommand = command.trim();
     if (trimmedName.length === 0) {
@@ -193,6 +209,7 @@ export default function ProjectScriptsControl({
     }
 
     setValidationError(null);
+    setPendingAction("save");
     try {
       const scriptIdForValidation =
         editingScriptId ??
@@ -220,6 +237,24 @@ export default function ProjectScriptsControl({
       setIconPickerOpen(false);
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : "Failed to save action.");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const confirmDeleteScript = async () => {
+    if (!editingScriptId || isPending) return;
+    setDeleteConfirmOpen(false);
+    setValidationError(null);
+    setPendingAction("delete");
+    try {
+      await onDeleteScript(editingScriptId);
+      setDialogOpen(false);
+      setIconPickerOpen(false);
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : "Failed to delete action.");
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -229,8 +264,10 @@ export default function ProjectScriptsControl({
     setCommand("");
     setIcon("play");
     setIconPickerOpen(false);
+    setDeleteConfirmOpen(false);
     setRunOnWorktreeCreate(false);
     setKeybinding("");
+    setPendingAction(null);
     setValidationError(null);
     setDialogOpen(true);
   };
@@ -241,8 +278,10 @@ export default function ProjectScriptsControl({
     setCommand(script.command);
     setIcon(script.icon);
     setIconPickerOpen(false);
+    setDeleteConfirmOpen(false);
     setRunOnWorktreeCreate(script.runOnWorktreeCreate);
     setKeybinding(keybindingValueForCommand(keybindings, commandForProjectScript(script.id)) ?? "");
+    setPendingAction(null);
     setValidationError(null);
     setDialogOpen(true);
   };
@@ -334,6 +373,7 @@ export default function ProjectScriptsControl({
           setDialogOpen(open);
           if (!open) {
             setIconPickerOpen(false);
+            setDeleteConfirmOpen(false);
           }
         }}
         onOpenChangeComplete={(open) => {
@@ -344,6 +384,7 @@ export default function ProjectScriptsControl({
           setIcon("play");
           setRunOnWorktreeCreate(false);
           setKeybinding("");
+          setPendingAction(null);
           setValidationError(null);
         }}
         open={dialogOpen}
@@ -366,6 +407,7 @@ export default function ProjectScriptsControl({
                         <Button
                           type="button"
                           variant="outline"
+                          disabled={isPending}
                           className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)]"
                           aria-label="Choose icon"
                         />
@@ -402,6 +444,7 @@ export default function ProjectScriptsControl({
                   <Input
                     id="script-name"
                     placeholder="Test"
+                    disabled={isPending}
                     value={name}
                     onChange={(event) => setName(event.target.value)}
                   />
@@ -414,6 +457,7 @@ export default function ProjectScriptsControl({
                   placeholder="Press shortcut"
                   value={keybinding}
                   readOnly
+                  disabled={isPending}
                   onKeyDown={captureKeybinding}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -425,6 +469,7 @@ export default function ProjectScriptsControl({
                 <Textarea
                   id="script-command"
                   placeholder="bun test"
+                  disabled={isPending}
                   value={command}
                   onChange={(event) => setCommand(event.target.value)}
                 />
@@ -433,28 +478,79 @@ export default function ProjectScriptsControl({
                 <span>Run automatically on worktree creation</span>
                 <Switch
                   checked={runOnWorktreeCreate}
+                  disabled={isPending}
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
                 />
               </label>
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}
             </form>
           </DialogPanel>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setDialogOpen(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button form={addScriptFormId} type="submit">
-              {isEditing ? "Save changes" : "Save action"}
-            </Button>
+          <DialogFooter className="items-center justify-between sm:justify-between">
+            <div>
+              {isEditing && (
+                <Button
+                  type="button"
+                  variant="destructive-outline"
+                  disabled={isPending}
+                  onClick={() => {
+                    setDeleteConfirmOpen(true);
+                  }}
+                >
+                  <Trash2Icon className="size-4" />
+                  Delete action
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPending}
+                onClick={() => {
+                  setDialogOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button form={addScriptFormId} type="submit" disabled={isPending}>
+                {pendingAction === "save"
+                  ? "Saving..."
+                  : isEditing
+                    ? "Save changes"
+                    : "Save action"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+      <AlertDialog onOpenChange={setDeleteConfirmOpen} open={deleteConfirmOpen}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete action?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action will be removed from this project, and its saved shortcut will also be
+              removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose
+              render={<Button type="button" variant="outline" disabled={isPending} />}
+            >
+              Cancel
+            </AlertDialogClose>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isPending}
+              onClick={() => {
+                void confirmDeleteScript();
+              }}
+            >
+              {pendingAction === "delete" ? "Deleting..." : "Delete action"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }
