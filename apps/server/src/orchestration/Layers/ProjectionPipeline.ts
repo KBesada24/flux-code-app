@@ -1156,22 +1156,27 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     },
   ];
 
-  const runProjectorForEvent = (projector: ProjectorDefinition, event: OrchestrationEvent) =>
+  const applyProjectorForEvent = (
+    projector: ProjectorDefinition,
+    event: OrchestrationEvent,
+  ): Effect.Effect<
+    void,
+    ProjectionRepositoryError,
+    FileSystem.FileSystem | Path.Path | ServerConfig
+  > =>
     Effect.gen(function* () {
       const attachmentSideEffects: AttachmentSideEffects = {
         deletedThreadIds: new Set<string>(),
         prunedThreadRelativePaths: new Map<string, Set<string>>(),
       };
 
-      yield* sql.withTransaction(
-        projector.apply(event, attachmentSideEffects).pipe(
-          Effect.flatMap(() =>
-            projectionStateRepository.upsert({
-              projector: projector.name,
-              lastAppliedSequence: event.sequence,
-              updatedAt: event.occurredAt,
-            }),
-          ),
+      yield* projector.apply(event, attachmentSideEffects).pipe(
+        Effect.flatMap(() =>
+          projectionStateRepository.upsert({
+            projector: projector.name,
+            lastAppliedSequence: event.sequence,
+            updatedAt: event.occurredAt,
+          }),
         ),
       );
 
@@ -1198,22 +1203,21 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             eventStore.readFromSequence(
               Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
             ),
-            (event) => runProjectorForEvent(projector, event),
+            // Bootstrap is replay-only, so each projected event manages its own transaction.
+            (event) => sql.withTransaction(applyProjectorForEvent(projector, event)),
           ),
         ),
       );
 
   const projectEvent: OrchestrationProjectionPipelineShape["projectEvent"] = (event) =>
-    Effect.forEach(projectors, (projector) => runProjectorForEvent(projector, event), {
+    // Live dispatch already runs inside the orchestration engine transaction.
+    Effect.forEach(projectors, (projector) => applyProjectorForEvent(projector, event), {
       concurrency: 1,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),
       Effect.asVoid,
-      Effect.catchTag("SqlError", (sqlError) =>
-        Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
-      ),
     );
 
   const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.forEach(
